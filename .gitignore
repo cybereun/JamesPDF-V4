@@ -1,0 +1,12 @@
+node.exe
+
+app/node_modules/
+app/uploads/
+app/outputs/
+app/data/
+
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+

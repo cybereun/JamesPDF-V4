@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>James PDF V4.0.0.0</title>
+  <meta name="theme-color" content="#ffffff">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/app-icon.png">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script defer src="https://unpkg.com/tesseract.js@5.0.1/dist/tesseract.min.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar">
+      <div class="brand">
+        <div class="brand-icon"><i data-lucide="file-text"></i></div>
+        <div>
+          <strong>James PDF</strong>
+          <span>V4.0.0.0 PDF Studio</span>
+        </div>
+      </div>
+      <div class="window-search">
+        <i data-lucide="search"></i>
+        <input id="searchInput" type="search" placeholder="찾을 내용">
+      </div>
+      <div class="system-state">
+        <span id="serverState">서버 확인</span>
+        <span id="toolState">도구 확인</span>
+      </div>
+    </header>
+
+    <nav class="menubar" aria-label="PDF 기능 탭">
+      <button class="is-active" type="button" data-ribbon-tab="file">파일</button>
+      <button type="button" data-ribbon-tab="home">홈</button>
+      <button type="button" data-ribbon-tab="view">보기</button>
+      <button type="button" data-ribbon-tab="edit">편집</button>
+      <button type="button" data-ribbon-tab="convert">변환</button>
+      <button type="button" data-ribbon-tab="security">보안</button>
+      <button type="button" data-ribbon-tab="ai">AI</button>
+    </nav>
+
+    <section class="ribbon">
+      <div class="ribbon-panel is-active" data-ribbon-panel="file">
+        <div class="ribbon-group">
+          <label class="ribbon-button">
+            <input id="openPdfInput" type="file" accept="application/pdf">
+            <i data-lucide="folder-open"></i>
+            <span>열기</span>
+          </label>
+          <button id="saveCurrentBtn" type="button" class="ribbon-button">
+            <i data-lucide="save"></i>
+            <span>저장</span>
+          </button>
+          <button id="closePdfBtn" type="button" class="ribbon-button">
+            <i data-lucide="folder-closed"></i>
+            <span>닫기</span>
+          </button>
+          <span class="ribbon-group-title">문서</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-print-dialog="open" data-focus="runPrintBtn"><i data-lucide="printer"></i><span>인쇄</span></button>
+          <span class="ribbon-group-title">인쇄</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-ribbon-tab="home"><i data-lucide="home"></i><span>홈으로</span></button>
+          <button type="button" class="ribbon-button" data-panel="extractPanel"><i data-lucide="scan-text"></i><span>추출 패널</span></button>
+          <span class="ribbon-group-title">시작</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="home">
+        <div class="ribbon-group">
+          <button id="prevPageBtn" type="button" class="ribbon-button compact"><i data-lucide="chevron-left"></i><span>이전</span></button>
+          <label class="page-box"><input id="pageNumberInput" type="number" min="1" value="1"><span id="pageCountLabel">/ 0</span></label>
+          <button id="nextPageBtn" type="button" class="ribbon-button compact"><i data-lucide="chevron-right"></i><span>다음</span></button>
+          <span class="ribbon-group-title">페이지 이동</span>
+        </div>
+        <div class="ribbon-group">
+          <button id="zoomOutBtn" type="button" class="ribbon-button compact"><i data-lucide="zoom-out"></i><span>축소</span></button>
+          <button id="zoomInBtn" type="button" class="ribbon-button compact"><i data-lucide="zoom-in"></i><span>확대</span></button>
+          <button id="fitWidthBtn" type="button" class="ribbon-button compact"><i data-lucide="scan"></i><span>쪽 맞춤</span></button>
+          <span class="ribbon-group-title">보기</span>
+        </div>
+        <div class="ribbon-group">
+          <button id="copyPageTextBtn" type="button" class="ribbon-button"><i data-lucide="copy"></i><span>텍스트 복사</span></button>
+          <button id="extractBtn" type="button" class="ribbon-button"><i data-lucide="braces"></i><span>JSON/MD</span></button>
+          <span class="ribbon-group-title">추출</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="view">
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-trigger="fitWidthBtn"><i data-lucide="panel-top"></i><span>쪽 맞춤</span></button>
+          <button type="button" class="ribbon-button" data-trigger="zoomOutBtn"><i data-lucide="zoom-out"></i><span>축소</span></button>
+          <button type="button" class="ribbon-button" data-trigger="zoomInBtn"><i data-lucide="zoom-in"></i><span>확대</span></button>
+          <span class="ribbon-group-title">확대/축소</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="extractPanel"><i data-lucide="text-search"></i><span>텍스트 보기</span></button>
+          <button type="button" class="ribbon-button" data-panel="pagePanel"><i data-lucide="panel-left"></i><span>페이지 도구</span></button>
+          <span class="ribbon-group-title">패널</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="edit">
+
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="editPanel" data-focus="editText"><i data-lucide="type"></i><span>텍스트 삽입</span></button>
+          <button type="button" class="ribbon-button" data-panel="editPanel" data-trigger="applyTextBtn"><i data-lucide="pen-line"></i><span>삽입 실행</span></button>
+          <span class="ribbon-group-title">텍스트</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="editPanel" data-focus="watermarkText"><i data-lucide="badge"></i><span>워터마크</span></button>
+          <button type="button" class="ribbon-button" data-panel="editPanel" data-trigger="watermarkBtn"><i data-lucide="stamp"></i><span>삽입 실행</span></button>
+          <span class="ribbon-group-title">워터마크</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="pagePanel" data-focus="pageRangeInput"><i data-lucide="file-output"></i><span>페이지 추출</span></button>
+          <button type="button" class="ribbon-button" data-panel="pagePanel" data-trigger="splitPdfBtn"><i data-lucide="scissors"></i><span>분할</span></button>
+          <button type="button" class="ribbon-button" data-panel="pagePanel" data-trigger="rotateBtn"><i data-lucide="rotate-cw"></i><span>회전</span></button>
+          <span class="ribbon-group-title">페이지 편집</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="convert">
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="convertPanel" data-trigger="imageFilesInput"><i data-lucide="image-plus"></i><span>이미지 선택</span></button>
+          <button type="button" class="ribbon-button" data-panel="convertPanel" data-trigger="imagesToPdfBtn"><i data-lucide="file-image"></i><span>PDF 만들기</span></button>
+          <span class="ribbon-group-title">이미지 PDF</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="pagePanel" data-trigger="mergeFilesInput"><i data-lucide="files"></i><span>PDF 병합</span></button>
+          <button type="button" class="ribbon-button" data-panel="pagePanel" data-trigger="mergeBtn"><i data-lucide="combine"></i><span>병합 실행</span></button>
+          <span class="ribbon-group-title">병합</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="convertPanel" data-trigger="compressBtn"><i data-lucide="archive"></i><span>압축</span></button>
+          <button type="button" class="ribbon-button" data-panel="extractPanel" data-trigger="runExtractBtn"><i data-lucide="braces"></i><span>JSON/MD</span></button>
+          <span class="ribbon-group-title">내보내기</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="security">
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="securityPanel" data-focus="encryptUserPassword"><i data-lucide="lock-keyhole"></i><span>암호 입력</span></button>
+          <button type="button" class="ribbon-button" data-panel="securityPanel" data-trigger="encryptBtn"><i data-lucide="lock"></i><span>암호 설정</span></button>
+          <span class="ribbon-group-title">보호</span>
+        </div>
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="securityPanel" data-focus="decryptPassword"><i data-lucide="key-round"></i><span>암호 해제</span></button>
+          <button type="button" class="ribbon-button" data-panel="securityPanel" data-trigger="decryptBtn"><i data-lucide="unlock"></i><span>해제 실행</span></button>
+          <span class="ribbon-group-title">해제</span>
+        </div>
+      </div>
+
+      <div class="ribbon-panel" data-ribbon-panel="ai">
+        <div class="ribbon-group">
+          <button type="button" class="ribbon-button" data-panel="aiPanel" data-focus="aiPrompt"><i data-lucide="bot"></i><span>AI 패널</span></button>
+          <button type="button" class="ribbon-button" data-panel="aiPanel" data-ai-preset="summarize"><i data-lucide="list-checks"></i><span>요약</span></button>
+          <button type="button" class="ribbon-button" data-panel="aiPanel" data-ai-preset="suggest"><i data-lucide="sparkles"></i><span>제안</span></button>
+          <span class="ribbon-group-title">AI Agent</span>
+        </div>
+      </div>
+    </section>
+
+    <main class="workspace">
+      <aside class="thumbbar">
+        <div class="pane-title">
+          <span>페이지</span>
+          <strong id="thumbCount">0</strong>
+        </div>
+        <div id="thumbnailList" class="thumbnail-list"></div>
+      </aside>
+
+      <section class="viewer">
+        <div id="dropOverlay" class="drop-overlay">
+          <i data-lucide="file-up"></i>
+          <strong>PDF 파일을 여기에 놓으세요</strong>
+        </div>
+        <div id="canvasHost" class="canvas-host">
+          <div class="canvas-wrapper" style="position: relative; display: inline-block;">
+            <canvas id="pdfCanvas"></canvas>
+            <div id="ocrOverlay" class="ocr-overlay hidden"></div>
+            <div id="editOverlay" class="edit-overlay hidden"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="rightbar">
+        <div class="panel-tabs">
+          <button class="is-active" type="button" data-side-tab="extractPanel">추출</button>
+          <button type="button" data-side-tab="editPanel">편집</button>
+          <button type="button" data-side-tab="pagePanel">페이지</button>
+          <button type="button" data-side-tab="convertPanel">변환</button>
+          <button type="button" data-side-tab="securityPanel">보안</button>
+          <button type="button" data-side-tab="aiPanel">AI</button>
+        </div>
+
+        <section id="extractPanel" class="side-panel is-active">
+          <div class="pane-title">
+            <span>현재 페이지 텍스트</span>
+            <button id="copyCurrentTextBtn" type="button" class="mini-button"><i data-lucide="copy"></i></button>
+          </div>
+          <textarea id="currentTextOutput" class="text-output" spellcheck="false"></textarea>
+
+          <div class="form-row">
+            <label><span>분석 모드</span><select id="extractMode"><option value="fast" selected>빠른 분석</option><option value="hybrid-ocr-formula">Hybrid OCR/Formula</option><option value="precision">Hybrid 정밀</option></select></label>
+            <label><span>페이지</span><input id="extractPages" type="text" placeholder="전체"></label>
+          </div>
+          <button id="runExtractBtn" type="button" class="primary-button"><i data-lucide="scan-text"></i><span>마크다운/JSON 추출</span></button>
+
+          <div class="result-tabs">
+            <button class="is-active" type="button" data-result-tab="markdown">Markdown</button>
+            <button type="button" data-result-tab="json">JSON</button>
+          </div>
+          <textarea id="markdownOutput" class="result-output" spellcheck="false"></textarea>
+          <textarea id="jsonOutput" class="result-output hidden" spellcheck="false"></textarea>
+          <div class="button-row">
+            <button id="copyMarkdownBtn" type="button" class="secondary-button"><i data-lucide="copy"></i><span>MD 복사</span></button>
+            <button id="copyJsonBtn" type="button" class="secondary-button"><i data-lucide="copy"></i><span>JSON 복사</span></button>
+          </div>
+        </section>
+
+        <section id="editPanel" class="side-panel">
+          <h3>텍스트 삽입</h3>
+          <label><span>글꼴</span><select id="editFontFamily"><option value="malgun" selected>맑은 고딕</option><option value="helvetica">Helvetica</option><option value="courier">Courier</option></select></label>
+          <div class="form-row">
+            <label><span>페이지</span><input id="editPage" type="number" min="1" value="1"></label>
+            <label><span>크기</span><input id="editFontSize" type="number" min="6" max="80" value="14"></label>
+          </div>
+          <div class="form-row" style="display: none;">
+            <label><span>X</span><input id="editX" type="number" value="72"></label>
+            <label><span>Y</span><input id="editY" type="number" value="720"></label>
+          </div>
+          <label><span>색상</span><input id="editColor" type="color" value="#111827"></label>
+          <label><span>내용</span><textarea id="editText" rows="3" style="height: 80px; resize: none;"></textarea></label>
+          <button id="applyTextBtn" type="button" class="primary-button"><i data-lucide="type"></i><span>PDF에 삽입</span></button>
+
+          <h3>워터마크</h3>
+          <label><span>문구</span><input id="watermarkText" type="text" value="JamePDF"></label>
+          <div class="form-row">
+            <label><span>크기</span><input id="watermarkSize" type="number" value="48"></label>
+            <label><span>투명도</span><input id="watermarkOpacity" type="number" min="0.05" max="1" step="0.05" value="0.18"></label>
+          </div>
+          <div class="form-row">
+            <label><span>각도</span><input id="watermarkAngle" type="number" value="-35"></label>
+            <label><span>페이지</span><input id="watermarkPages" type="text" placeholder="전체"></label>
+          </div>
+          <button id="watermarkBtn" type="button" class="secondary-button"><i data-lucide="badge"></i><span>워터마크 삽입</span></button>
+        </section>
+
+        <section id="pagePanel" class="side-panel">
+          <h3>페이지 조작</h3>
+          <label><span>페이지 범위</span><input id="pageRangeInput" type="text" placeholder="예: 1-3, 5"></label>
+          <div class="button-grid">
+            <button id="extractPagesBtn" type="button" class="secondary-button"><i data-lucide="file-output"></i><span>특정 페이지만 추출</span></button>
+            <button id="splitPdfBtn" type="button" class="secondary-button"><i data-lucide="scissors"></i><span>PDF 분할</span></button>
+          </div>
+          <div class="form-row">
+            <label><span>회전</span><select id="rotateDegrees"><option value="90">90도</option><option value="180">180도</option><option value="270">270도</option><option value="-90">-90도</option></select></label>
+            <button id="rotateBtn" type="button" class="secondary-button align-end"><i data-lucide="rotate-cw"></i><span>회전</span></button>
+          </div>
+
+          <h3>PDF 병합</h3>
+          <label class="file-picker">
+            <input id="mergeFilesInput" type="file" accept="application/pdf" multiple>
+            <i data-lucide="files"></i>
+            <span id="mergeFileLabel">PDF 여러 개 선택</span>
+          </label>
+          <button id="mergeBtn" type="button" class="primary-button"><i data-lucide="combine"></i><span>병합 실행</span></button>
+        </section>
+
+        <section id="convertPanel" class="side-panel">
+          <h3>이미지 PDF 변환</h3>
+          <label class="file-picker">
+            <input id="imageFilesInput" type="file" accept="image/png,image/jpeg" multiple>
+            <i data-lucide="image-plus"></i>
+            <span id="imageFileLabel">JPG/PNG 선택</span>
+          </label>
+          <button id="imagesToPdfBtn" type="button" class="primary-button"><i data-lucide="file-image"></i><span>PDF 만들기</span></button>
+
+          <h3>용량 압축</h3>
+          <label><span>품질</span><select id="compressLevel"><option value="ebook">일반</option><option value="screen">최대 압축</option><option value="printer">인쇄</option><option value="prepress">고품질</option></select></label>
+          <button id="compressBtn" type="button" class="secondary-button"><i data-lucide="archive"></i><span>압축 실행</span></button>
+          <div id="compressNote" class="note"></div>
+        </section>
+
+        <section id="securityPanel" class="side-panel">
+          <h3>암호 설정</h3>
+          <label><span>열기 암호</span><input id="encryptUserPassword" type="password"></label>
+          <label><span>소유자 암호</span><input id="encryptOwnerPassword" type="password"></label>
+          <button id="encryptBtn" type="button" class="primary-button"><i data-lucide="lock"></i><span>암호 설정</span></button>
+
+          <h3>암호 해제</h3>
+          <label><span>현재 암호</span><input id="decryptPassword" type="password"></label>
+          <button id="decryptBtn" type="button" class="secondary-button"><i data-lucide="unlock"></i><span>암호 해제</span></button>
+          <div id="securityNote" class="note"></div>
+        </section>
+
+        <section id="aiPanel" class="side-panel ai-panel">
+          <div class="pane-title">
+            <span>AI Agent</span>
+            <button id="aiRefreshBtn" type="button" class="mini-button" title="AI 상태 새로고침"><i data-lucide="refresh-cw"></i></button>
+          </div>
+          <div id="aiConnectionState" class="ai-connection-state is-checking">
+            <span class="ai-connection-dot"></span>
+            <strong>AI 연결 확인 중</strong>
+          </div>
+
+          <div id="aiStatusNote" class="note">AI 상태를 확인하는 중입니다.</div>
+
+          <div class="ai-quick-grid">
+            <button type="button" class="secondary-button" data-ai-preset="summarize"><i data-lucide="list-checks"></i><span>요약</span></button>
+            <button type="button" class="secondary-button" data-ai-preset="organize"><i data-lucide="panel-top"></i><span>정리</span></button>
+            <button type="button" class="secondary-button" data-ai-preset="question"><i data-lucide="circle-help"></i><span>질문</span></button>
+            <button type="button" class="secondary-button" data-ai-preset="suggest"><i data-lucide="sparkles"></i><span>새 제안</span></button>
+          </div>
+
+          <div id="aiOutput" class="ai-output" role="log" aria-live="polite"></div>
+          <div class="ai-composer">
+            <textarea id="aiPrompt" class="ai-prompt" rows="3" placeholder="Send a message"></textarea>
+            <div class="ai-composer-actions">
+              <button type="button" class="ai-icon-button" title="PDF 컨텍스트 포함"><i data-lucide="plus"></i></button>
+              <button id="aiClearBtn" type="button" class="ai-icon-button" title="대화 지우기"><i data-lucide="eraser"></i></button>
+              <select id="aiProvider" class="ai-provider-pill" title="Provider"><option value="codex" selected>Codex</option><option value="antigravity">Antigravity</option><option value="claude">Claude</option><option value="gemma">Ollama</option></select>
+              <select id="aiModel" class="ai-model-pill" title="Model"></select>
+              <button id="aiSendBtn" type="button" class="ai-send-button" title="보내기"><i data-lucide="arrow-up"></i></button>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <button id="rightbarToggleBtn" class="rightbar-toggle" type="button" aria-label="&#50724;&#47480;&#51901; &#54056;&#45328; &#49704;&#44592;&#44592;" aria-pressed="false" title="&#50724;&#47480;&#51901; &#54056;&#45328; &#49704;&#44592;&#44592;">
+        <i data-lucide="panel-right-close"></i>
+      </button>
+    </main>
+
+    <footer class="statusbar">
+      <span id="documentName">문서 없음</span>
+      <span id="pageStatus">0 / 0</span>
+      <span id="zoomStatus">100%</span>
+      <span id="operationStatus">대기</span>
+    </footer>
+  </div>
+
+  <div id="printRenderHost" class="print-render-host" aria-hidden="true"></div>
+
+  <div id="saveDialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
+    <section class="modal-card save-dialog">
+      <header class="modal-header">
+        <div>
+          <strong id="saveDialogTitle">PDF 저장</strong>
+          <span>현재 문서를 저장할 방식을 선택합니다.</span>
+        </div>
+        <button id="closeSaveDialogBtn" type="button" class="mini-button" aria-label="닫기"><i data-lucide="x"></i></button>
+      </header>
+      <div class="modal-body">
+        <div class="save-choice-grid">
+          <button id="saveCurrentLocationBtn" type="button" class="save-choice">
+            <i data-lucide="save"></i>
+            <strong>현재 위치에 저장</strong>
+            <span>저장 위치가 지정된 문서는 그대로 덮어쓰고, 없으면 현재 파일명으로 저장합니다.</span>
+          </button>
+          <button id="saveAsBtn" type="button" class="save-choice">
+            <i data-lucide="folder-pen"></i>
+            <strong>다른 이름으로 저장</strong>
+            <span>파일 이름과 저장 폴더를 새로 지정합니다.</span>
+          </button>
+        </div>
+        <div id="saveNote" class="note">Windows 저장 대화상자에서 파일 이름과 폴더를 지정합니다. 대화상자를 사용할 수 없는 환경에서는 일반 다운로드로 저장됩니다.</div>
+      </div>
+      <footer class="modal-footer">
+        <button id="cancelSaveDialogBtn" type="button" class="secondary-button"><span>취소</span></button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="printDialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="printDialogTitle">
+    <section class="modal-card print-dialog">
+      <header class="modal-header">
+        <div>
+          <strong id="printDialogTitle">인쇄 설정</strong>
+          <span>모아찍기 PDF를 만들고 인쇄창을 엽니다.</span>
+        </div>
+        <button id="closePrintDialogBtn" type="button" class="mini-button" aria-label="닫기"><i data-lucide="x"></i></button>
+      </header>
+      <div class="modal-body">
+        <div class="form-row">
+          <label><span>대상</span><select id="printScope"><option value="all">전체 문서</option><option value="current">현재 페이지</option><option value="range">페이지 범위</option></select></label>
+          <label><span>페이지</span><input id="printPages" type="text" placeholder="예: 1-3, 5"></label>
+        </div>
+        <div class="form-row">
+          <label><span>한 장당</span><select id="printPagesPerSheet"><option value="1">1쪽</option><option value="2">2쪽</option><option value="4">4쪽</option><option value="6">6쪽</option><option value="9">9쪽</option></select></label>
+          <label><span>방향</span><select id="printOrientation"><option value="portrait">세로</option><option value="landscape">가로</option></select></label>
+        </div>
+        <div class="form-row">
+          <label><span>용지</span><select id="printPaper"><option value="a4">A4</option><option value="letter">Letter</option><option value="legal">Legal</option></select></label>
+          <label><span>여백</span><select id="printMargin"><option value="4">좁게</option><option value="8" selected>보통</option><option value="14">넓게</option></select></label>
+        </div>
+        <div class="form-row">
+          <label><span>인쇄 방식</span><select id="printDuplex"><option value="simplex">단면</option><option value="duplex-long">양면 - 긴쪽 넘김</option><option value="duplex-short">양면 - 짧은쪽 넘김</option></select></label>
+          <label><span>부수</span><input id="printCopies" type="number" min="1" max="20" value="1"></label>
+        </div>
+        <label><span>크기 조정</span><select id="printFitMode"><option value="fit">여백 제거 후 맞춤</option><option value="actual">원본 여백 유지</option></select></label>
+        <label class="check-row"><input id="printReverse" type="checkbox"><span>역순 인쇄용으로 페이지 순서 뒤집기</span></label>
+        <label class="check-row"><input id="printBorder" type="checkbox"><span>한 장당 여러 쪽 인쇄 시 페이지 경계선 표시</span></label>
+        <div id="printNote" class="note">양면/단면은 브라우저가 강제할 수 없어 인쇄창에서 최종 선택해야 합니다. 앱은 먼저 방향과 한 장당 페이지 수를 반영한 인쇄용 PDF를 만듭니다.</div>
+      </div>
+      <footer class="modal-footer">
+        <button id="cancelPrintDialogBtn" type="button" class="secondary-button"><span>취소</span></button>
+        <button id="downloadPrintBtn" type="button" class="secondary-button"><i data-lucide="file-down"></i><span>인쇄용 PDF 저장</span></button>
+        <button id="runPrintBtn" type="button" class="primary-button"><i data-lucide="printer"></i><span>인쇄창 열기</span></button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="floatingFormatToolbar" class="floating-toolbar hidden">
+    <div class="toolbar-group">
+      <select id="toolbarFontFamily" title="글꼴">
+        <option value="malgun" selected>맑은 고딕</option>
+        <option value="helvetica">Helvetica</option>
+        <option value="courier">Courier</option>
+      </select>
+      <select id="toolbarFontSize" title="글자 크기">
+        <option value="10">10</option>
+        <option value="12">12</option>
+        <option value="14" selected>14</option>
+        <option value="16">16</option>
+        <option value="18">18</option>
+        <option value="20">20</option>
+        <option value="24">24</option>
+        <option value="32">32</option>
+        <option value="40">40</option>
+        <option value="48">48</option>
+      </select>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button id="toolbarBtnItalic" type="button" class="toolbar-btn" title="기울임"><i data-lucide="italic"></i></button>
+      <button id="toolbarBtnUnderline" type="button" class="toolbar-btn" title="밑줄"><i data-lucide="underline"></i></button>
+      <button id="toolbarBtnStrikethrough" type="button" class="toolbar-btn" title="취소선"><i data-lucide="strikethrough"></i></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <input id="toolbarColor" type="color" value="#111827" title="글자 색상">
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button id="toolbarBtnDelete" type="button" class="toolbar-btn danger" title="삭제"><i data-lucide="trash-2"></i></button>
+    </div>
+  </div>
+
+  <div id="searchWidget" class="search-widget hidden">
+    <div class="search-widget-input-row">
+      <input id="widgetSearchInput" type="text" placeholder="단어 찾기 및 편집...">
+      <button id="widgetSearchPrev" class="search-nav-btn" title="이전"><i data-lucide="chevron-up"></i></button>
+      <button id="widgetSearchNext" class="search-nav-btn" title="다음"><i data-lucide="chevron-down"></i></button>
+      <button id="widgetSearchMenu" class="search-nav-btn" title="옵션"><i data-lucide="more-horizontal"></i></button>
+      <button id="closeSearchWidgetBtn" class="search-nav-btn" title="닫기"><i data-lucide="x"></i></button>
+    </div>
+    <div id="searchWidgetResults" class="search-widget-results hidden">
+      <div class="results-header">
+        <span>정확한 일치 항목</span>
+        <span id="resultsCount">0</span>
+      </div>
+      <div id="resultsList" class="results-list"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
