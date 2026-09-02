@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>James Studio</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/kordoc.css">
+  <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script defer src="/kordoc.js?v=20260603-form-repeat-fields-v4"></script>
+</head>
+<body>
+  <div class="studio-shell">
+    <header class="studio-topbar">
+      <div class="studio-brand">
+        <div class="studio-mark"><i data-lucide="layers-3"></i></div>
+        <div>
+          <strong>James Studio</strong>
+          <span id="studioState">Kordoc 연결 확인</span>
+        </div>
+      </div>
+      <div class="studio-actions">
+        <button id="backToClassicBtn" type="button" class="ghost-button"><i data-lucide="arrow-left"></i><span>Classic PDF</span></button>
+      </div>
+    </header>
+
+    <nav class="studio-tabs" aria-label="James Studio 작업">
+      <button type="button" class="is-active" data-view="parseView"><i data-lucide="scan-text"></i><span>파싱</span></button>
+      <button type="button" data-view="recreateView"><i data-lucide="file-output"></i><span>재생성</span></button>
+      <button type="button" data-view="compareView"><i data-lucide="git-compare"></i><span>비교</span></button>
+      <button type="button" data-view="formsView"><i data-lucide="table-properties"></i><span>양식</span></button>
+    </nav>
+
+    <main class="studio-workspace">
+      <aside class="studio-left">
+        <section class="tool-section">
+          <h2>문서 입력</h2>
+          <label class="file-drop">
+            <input id="documentInput" type="file" accept=".hwp,.hwpx,.hwpml,.pdf,.docx,.xls,.xlsx,application/pdf">
+            <i data-lucide="file-up"></i>
+            <span id="documentFileLabel">문서 선택</span>
+          </label>
+          <div class="control-grid">
+            <label><span>페이지</span><input id="pageRangeInput" type="text" placeholder="전체"></label>
+            <label><span>출력 프리셋</span><select id="printPreset"><option value="default">Default</option><option value="gov-formal">Gov Formal</option><option value="compact">Compact</option></select></label>
+          </div>
+          <label class="check-row"><input id="removeHeaderFooter" type="checkbox"><span>머리글/바닥글 제거</span></label>
+          <label class="check-row"><input id="formulaOcr" type="checkbox" checked><span>Classic PDF 수식 보정</span></label>
+          <button id="parseBtn" type="button" class="primary-button"><i data-lucide="play"></i><span>분석 실행</span></button>
+          <div id="statusText" class="status-line">대기</div>
+        </section>
+
+        <section class="tool-section">
+          <h2>결과</h2>
+          <div class="metric-grid">
+            <div><span>형식</span><strong id="metricType">-</strong></div>
+            <div><span>블록</span><strong id="metricBlocks">0</strong></div>
+            <div><span>표</span><strong id="metricTables">0</strong></div>
+            <div><span>이미지</span><strong id="metricImages">0</strong></div>
+          </div>
+          <div class="download-row">
+            <button id="downloadMarkdownBtn" type="button"><i data-lucide="file-text"></i><span>MD</span></button>
+            <button id="downloadJsonBtn" type="button"><i data-lucide="braces"></i><span>JSON</span></button>
+            <button id="downloadHtmlBtn" type="button"><i data-lucide="code"></i><span>HTML</span></button>
+          </div>
+        </section>
+      </aside>
+
+      <section id="parseView" class="studio-view is-active">
+        <div class="result-tabs">
+          <button type="button" class="is-active" data-result-tab="markdownPanel">Markdown</button>
+          <button type="button" data-result-tab="jsonPanel">JSON</button>
+          <button type="button" data-result-tab="previewPanel">Preview</button>
+          <button type="button" data-result-tab="structurePanel">Structure</button>
+          <button type="button" data-result-tab="imagePanel">Images</button>
+        </div>
+        <div id="markdownPanel" class="result-panel is-active"><textarea id="markdownOutput" spellcheck="false"></textarea></div>
+        <div id="jsonPanel" class="result-panel"><textarea id="jsonOutput" spellcheck="false"></textarea></div>
+        <div id="previewPanel" class="result-panel"><iframe id="htmlPreview" title="HTML preview"></iframe></div>
+        <div id="structurePanel" class="result-panel"><div id="structureOutput" class="structure-list"></div></div>
+        <div id="imagePanel" class="result-panel"><div id="imageOutput" class="image-grid"></div></div>
+      </section>
+
+      <section id="recreateView" class="studio-view">
+        <div class="wide-tool recreate-tool">
+          <div class="toolbar-row">
+            <label><span>출력</span><select id="recreateFormat"><option value="hwpx">HWPX</option><option value="html">HTML</option><option value="pdf">PDF</option></select></label>
+            <button id="recreateBtn" type="button" class="primary-button"><i data-lucide="download"></i><span>재생성 저장</span></button>
+          </div>
+          <div class="recreate-editor-shell">
+            <textarea id="recreateMarkdown" spellcheck="false" rows="12"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <section id="compareView" class="studio-view">
+        <div class="compare-grid">
+          <label class="file-drop small"><input id="compareFileA" type="file" accept=".hwp,.hwpx,.hwpml,.pdf,.docx,.xls,.xlsx"><i data-lucide="file"></i><span id="compareLabelA">문서 A</span></label>
+          <label class="file-drop small"><input id="compareFileB" type="file" accept=".hwp,.hwpx,.hwpml,.pdf,.docx,.xls,.xlsx"><i data-lucide="file"></i><span id="compareLabelB">문서 B</span></label>
+          <button id="compareBtn" type="button" class="primary-button"><i data-lucide="git-compare"></i><span>비교 실행</span></button>
+        </div>
+        <div id="compareOutput" class="compare-output">
+          <div class="compare-empty">
+            <strong>문서 두 개를 선택한 뒤 비교 실행을 누르세요.</strong>
+            <span>변경된 문단, 추가/삭제된 블록, 표 셀 변경을 사람이 읽는 목록으로 표시합니다.</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="formsView" class="studio-view">
+        <div class="form-tool">
+          <div class="form-toolbar">
+            <label class="file-drop small form-template-drop">
+              <input id="formTemplateInput" type="file" accept=".hwpx,application/vnd.hancom.hwpx">
+              <i data-lucide="file-input"></i>
+              <span id="formTemplateLabel">HWPX 양식 템플릿</span>
+            </label>
+            <button id="formsBtn" type="button" class="primary-button"><i data-lucide="scan-search"></i><span>필드 감지</span></button>
+            <button id="fillFormBtn" type="button" class="primary-button"><i data-lucide="file-check-2"></i><span>원본 서식 보존 저장</span></button>
+          </div>
+
+          <div class="form-body">
+            <section class="form-panel form-fields-panel">
+              <div class="form-panel-title">
+                <strong>감지된 필드</strong>
+                <span id="formFillSummary">템플릿을 선택하고 필드를 감지하세요.</span>
+              </div>
+              <div id="formsOutput" class="forms-output">
+                <div class="status-line">양식 필드가 아직 없습니다.</div>
+              </div>
+            </section>
+
+            <section class="form-panel form-values-panel">
+              <div class="form-panel-title">
+                <strong>입력값 JSON</strong>
+                <span>표 입력값과 동기화됩니다.</span>
+              </div>
+              <textarea id="formValuesJson" spellcheck="false" rows="10" placeholder='{"성명":"홍길동","주소":"서울시 ..."}'></textarea>
+              <div class="form-ai-box">
+                <div class="toolbar-row">
+                  <label><span>AI</span><select id="formAiProvider"><option value="codex" selected>Codex</option><option value="antigravity">Antigravity</option><option value="claude">Claude</option><option value="gemma">Ollama</option></select></label>
+                  <button id="formAiBtn" type="button" class="ghost-button"><i data-lucide="sparkles"></i><span>값 초안</span></button>
+                </div>
+                <textarea id="formAiPrompt" spellcheck="false" rows="4" placeholder="예: 성명은 홍길동, 주소는 서울시 강남구, 전화번호는 010-1234-5678로 채워줘."></textarea>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="studio-statusbar" aria-label="실행 정보">
+      <div id="footerDocumentStatus" class="statusbar-item statusbar-document" title="문서 없음">문서 없음</div>
+      <div id="footerCountStatus" class="statusbar-item">0 / 0</div>
+      <div id="footerZoomStatus" class="statusbar-item">100%</div>
+      <div id="footerRunStatus" class="statusbar-item">대기</div>
+    </footer>
+  </div>
+</body>
+</html>

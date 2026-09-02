@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "JamePDF V3.0.0",
   "short_name": "JamePDF",
   "description": "Local PDF studio for viewing, editing, and extracting PDF files.",
@@ -21,3 +21,4 @@
     }
   ]
 }
+

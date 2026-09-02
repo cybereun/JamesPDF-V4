@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>James PDF V4.0.0.0</title>
+  <title>James PDF 4.2.1</title>
   <meta name="theme-color" content="#ffffff">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/favicon.ico">
@@ -21,7 +21,7 @@
         <div class="brand-icon"><i data-lucide="file-text"></i></div>
         <div>
           <strong>James PDF</strong>
-          <span>V4.0.0.0 PDF Studio</span>
+          <span>V4.2.1 PDF Studio</span>
         </div>
       </div>
       <div class="window-search">
@@ -32,6 +32,10 @@
         <span id="serverState">서버 확인</span>
         <span id="toolState">도구 확인</span>
       </div>
+      <button id="aiiStudioBtn" type="button" class="studio-launch-button">
+        <i data-lucide="layers-3"></i>
+        <span>James Studio</span>
+      </button>
     </header>
 
     <nav class="menubar" aria-label="PDF 기능 탭">
@@ -213,6 +217,7 @@
             <label><span>페이지</span><input id="extractPages" type="text" placeholder="전체"></label>
           </div>
           <button id="runExtractBtn" type="button" class="primary-button"><i data-lucide="scan-text"></i><span>마크다운/JSON 추출</span></button>
+          <div id="extractNote" class="note"></div>
 
           <div class="result-tabs">
             <button class="is-active" type="button" data-result-tab="markdown">Markdown</button>
@@ -415,6 +420,32 @@
         <button id="cancelPrintDialogBtn" type="button" class="secondary-button"><span>취소</span></button>
         <button id="downloadPrintBtn" type="button" class="secondary-button"><i data-lucide="file-down"></i><span>인쇄용 PDF 저장</span></button>
         <button id="runPrintBtn" type="button" class="primary-button"><i data-lucide="printer"></i><span>인쇄창 열기</span></button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="updateDialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="updateDialogTitle">
+    <section class="modal-card update-dialog">
+      <header class="modal-header">
+        <div>
+          <strong id="updateDialogTitle">새 업데이트가 있습니다</strong>
+          <span id="updateVersionSummary">새 버전의 James PDF를 설치할 수 있습니다.</span>
+        </div>
+        <button id="closeUpdateDialogBtn" type="button" class="mini-button" aria-label="닫기"><i data-lucide="x"></i></button>
+      </header>
+      <div class="modal-body">
+        <div class="update-version-row">
+          <span id="updateCurrentVersion">현재 버전</span>
+          <i data-lucide="arrow-right"></i>
+          <strong id="updateLatestVersion">최신 버전</strong>
+        </div>
+        <pre id="updateReleaseNotes" class="update-release-notes">릴리스 정보를 불러오는 중입니다.</pre>
+        <div id="updateProgress" class="note">설치 파일은 SHA-256 검증 후 실행됩니다.</div>
+      </div>
+      <footer class="modal-footer">
+        <button id="laterUpdateBtn" type="button" class="secondary-button"><span>나중에</span></button>
+        <a id="viewReleaseBtn" class="secondary-button update-release-link" href="#" target="_blank" rel="noopener noreferrer"><span>릴리스 보기</span></a>
+        <button id="installUpdateBtn" type="button" class="primary-button"><i data-lucide="download"></i><span>업데이트 및 재시작</span></button>
       </footer>
     </section>
   </div>

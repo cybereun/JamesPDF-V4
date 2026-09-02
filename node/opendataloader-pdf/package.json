@@ -1,0 +1,86 @@
+{
+  "name": "@opendataloader/pdf",
+  "version": "0.0.0",
+  "description": "A Node.js wrapper for the opendataloader-pdf Java CLI.",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "opendataloader-pdf": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "setup": "node ./scripts/setup.cjs",
+    "build": "pnpm run setup && tsup",
+    "test": "vitest --run",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opendataloader-project/opendataloader-pdf.git"
+  },
+  "keywords": [
+    "pdf",
+    "markdown",
+    "html",
+    "convert",
+    "pdf-convert",
+    "pdf-parser",
+    "pdf-parsing",
+    "pdf-to-json",
+    "pdf-to-markdown",
+    "pdf-to-html"
+  ],
+  "author": "opendataloader-project",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/opendataloader-project/opendataloader-pdf/issues"
+  },
+  "homepage": "https://github.com/opendataloader-project/opendataloader-pdf#readme",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.2",
+    "@typescript-eslint/parser": "^8.58.2",
+    "eslint": "^10.2.0",
+    "glob": "^13.0.6",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch@<10.2.3": ">=10.2.3",
+      "flatted@<3.4.2": ">=3.4.2",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
+  "files": [
+    "dist",
+    "lib",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "THIRD_PARTY"
+  ]
+}

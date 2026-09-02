@@ -1,9 +1,15 @@
 node.exe
 
-app/node_modules/
+# Dependencies and generated runtime data
+**/node_modules/
+**/__pycache__/
+**/*.py[cod]
 app/uploads/
 app/outputs/
 app/data/
+app/output/
+app/.playwright-cli/
+.jamespdf-git/
 
 *.log
 *.tmp

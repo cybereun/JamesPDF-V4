@@ -139,6 +139,26 @@ button {
   color: #b45309;
 }
 
+.studio-launch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #1f2937;
+  border-radius: var(--radius);
+  background: #111827;
+  color: #ffffff;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.studio-launch-button svg {
+  width: 15px;
+  height: 15px;
+}
+
 .menubar {
   display: flex;
   align-items: stretch;
@@ -1058,6 +1078,51 @@ textarea:focus {
 
 .save-dialog {
   width: min(560px, calc(100vw - 48px));
+}
+
+.update-dialog {
+  width: min(620px, calc(100vw - 48px));
+}
+
+.update-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.update-version-row svg {
+  width: 18px;
+  height: 18px;
+}
+
+.update-release-notes {
+  min-height: 110px;
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-release-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .save-choice-grid {

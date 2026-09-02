@@ -24,6 +24,8 @@ const state = {
   aiProviders: {},
   aiAbortController: null,
   aiModelSelections: {},
+  availableUpdate: null,
+  updateInstalling: false,
 };
 
 const els = {};
@@ -84,12 +86,15 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDocuments();
   refreshIcons();
   loadSystemFonts();
+  setTimeout(() => checkForAppUpdate(), 3500);
+  setInterval(() => checkForAppUpdate(), 6 * 60 * 60 * 1000);
 });
 
 function cacheElements() {
   [
     'serverState',
     'toolState',
+    'aiiStudioBtn',
     'searchInput',
     'openPdfInput',
     'saveCurrentBtn',
@@ -115,6 +120,16 @@ function cacheElements() {
     'closeSaveDialogBtn',
     'cancelSaveDialogBtn',
     'saveNote',
+    'updateDialog',
+    'updateVersionSummary',
+    'updateCurrentVersion',
+    'updateLatestVersion',
+    'updateReleaseNotes',
+    'updateProgress',
+    'closeUpdateDialogBtn',
+    'laterUpdateBtn',
+    'viewReleaseBtn',
+    'installUpdateBtn',
     'printDialog',
     'printScope',
     'printPages',
@@ -137,6 +152,7 @@ function cacheElements() {
     'extractMode',
     'extractPages',
     'runExtractBtn',
+    'extractNote',
     'markdownOutput',
     'jsonOutput',
     'copyMarkdownBtn',
@@ -514,6 +530,11 @@ function bindUi() {
     const file = els.openPdfInput.files[0];
     if (file) uploadAndOpenPdf(file);
   });
+  if (els.aiiStudioBtn) {
+    els.aiiStudioBtn.addEventListener('click', () => {
+      window.location.href = '/kordoc';
+    });
+  }
 
   els.saveCurrentBtn.addEventListener('click', () => {
     openSaveDialog();
@@ -525,6 +546,12 @@ function bindUi() {
   els.cancelSaveDialogBtn.addEventListener('click', closeSaveDialog);
   els.saveDialog.addEventListener('click', (event) => {
     if (event.target === els.saveDialog) closeSaveDialog();
+  });
+  els.closeUpdateDialogBtn.addEventListener('click', closeUpdateDialog);
+  els.laterUpdateBtn.addEventListener('click', closeUpdateDialog);
+  els.installUpdateBtn.addEventListener('click', installAppUpdate);
+  els.updateDialog.addEventListener('click', (event) => {
+    if (event.target === els.updateDialog && !state.updateInstalling) closeUpdateDialog();
   });
   els.prevPageBtn.addEventListener('click', () => goToPage(state.page - 1));
   els.nextPageBtn.addEventListener('click', () => goToPage(state.page + 1));
@@ -680,6 +707,8 @@ function bindUi() {
         closeSaveDialog();
       } else if (!els.printDialog.classList.contains('hidden')) {
         closePrintDialog();
+      } else if (!els.updateDialog.classList.contains('hidden') && !state.updateInstalling) {
+        closeUpdateDialog();
       } else if (!els.searchWidget.classList.contains('hidden')) {
         hideSearchWidget();
       } else if (state.activeAnnotationId && !state.isEditingText) {
@@ -708,6 +737,77 @@ function bindUi() {
   });
 }
 
+async function checkForAppUpdate({ force = false } = {}) {
+  try {
+    const status = await requestJson(`/api/update/status${force ? '?force=1' : ''}`);
+    if (!status.available || !status.installable) return;
+    state.availableUpdate = status;
+    els.updateVersionSummary.textContent = `${status.name || status.tag || '새 버전'}을 설치할 수 있습니다.`;
+    els.updateCurrentVersion.textContent = `현재 ${status.currentVersion}`;
+    els.updateLatestVersion.textContent = `최신 ${status.latestVersion}`;
+    els.updateReleaseNotes.textContent = status.notes || '이번 릴리스의 상세 설명이 없습니다.';
+    els.updateProgress.textContent = '설치 파일은 GitHub Release의 SHA-256 값과 대조한 후 실행됩니다.';
+    els.viewReleaseBtn.href = status.releaseUrl || '#';
+    els.updateDialog.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    refreshIcons();
+  } catch (error) {
+    console.warn('Update check failed:', error);
+  }
+}
+
+function closeUpdateDialog() {
+  if (state.updateInstalling) return;
+  els.updateDialog.classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+async function installAppUpdate() {
+  if (state.updateInstalling || !state.availableUpdate) return;
+  state.updateInstalling = true;
+  els.installUpdateBtn.disabled = true;
+  els.closeUpdateDialogBtn.disabled = true;
+  els.laterUpdateBtn.disabled = true;
+  els.updateProgress.textContent = '설치 파일을 다운로드하고 SHA-256을 검증하는 중입니다. 창을 닫지 마세요.';
+  try {
+    const response = await fetch('/api/update/install', {
+      method: 'POST',
+      headers: { 'X-JamePDF-Update-Request': '1' },
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || response.statusText);
+    els.updateProgress.textContent = result.message || '업데이트를 설치하고 앱을 다시 시작합니다.';
+    waitForUpdatedServer(result.version || state.availableUpdate.latestVersion);
+  } catch (error) {
+    state.updateInstalling = false;
+    els.installUpdateBtn.disabled = false;
+    els.closeUpdateDialogBtn.disabled = false;
+    els.laterUpdateBtn.disabled = false;
+    els.updateProgress.textContent = `업데이트 실패: ${error.message}`;
+    showToast(error.message, true);
+  }
+}
+
+async function waitForUpdatedServer(expectedVersion) {
+  const deadline = Date.now() + 3 * 60 * 1000;
+  await new Promise((resolve) => setTimeout(resolve, 1800));
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/api/health?update=${Date.now()}`, { cache: 'no-store' });
+      if (response.ok) {
+        const health = await response.json();
+        if (!expectedVersion || health.version === expectedVersion) {
+          window.location.reload();
+          return;
+        }
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  state.updateInstalling = false;
+  els.updateProgress.textContent = '설치는 시작됐지만 앱 재시작을 확인하지 못했습니다. James PDF를 다시 실행해주세요.';
+}
+
 async function loadHealth() {
   try {
     const health = await requestJson('/api/health');
@@ -717,13 +817,18 @@ async function loadHealth() {
     const hasQpdf = Boolean(health.dependencies?.qpdf);
     const hasGs = Boolean(health.dependencies?.ghostscript);
     const hasHybrid = Boolean(health.dependencies?.hybrid?.available);
+    const hasKordocStudio = Boolean(health.dependencies?.kordocStudio?.dist);
     els.toolState.textContent = hasHybrid ? 'Hybrid 준비' : 'Hybrid 대기';
     els.toolState.className = hasHybrid ? 'ready' : 'limited';
 
     els.securityNote.textContent = hasQpdf ? '' : '암호 설정·해제는 qpdf 설치 후 활성화됩니다.';
     els.compressNote.textContent = hasGs ? '' : 'Ghostscript가 없어 압축은 객체 재저장 방식으로 동작합니다.';
-    if (!hasHybrid) {
-      els.compressNote.textContent = `${els.compressNote.textContent ? `${els.compressNote.textContent}\n` : ''}추출은 실행 시 Hybrid OCR/Formula 서버를 자동으로 시작합니다.`;
+    if (els.aiiStudioBtn) {
+      els.aiiStudioBtn.disabled = !hasKordocStudio;
+      els.aiiStudioBtn.title = hasKordocStudio ? 'James Studio' : 'James Studio 빌드가 필요합니다.';
+    }
+    if (els.extractNote) {
+      els.extractNote.textContent = hasHybrid ? '' : '추출은 실행 시 Hybrid OCR/Formula 서버를 자동으로 시작합니다.';
     }
   } catch (error) {
     els.serverState.textContent = '오프라인';

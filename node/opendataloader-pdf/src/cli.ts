@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+import { Command, CommanderError } from 'commander';
+import { _runForCli } from './index.js';
+import { CliOptions, buildConvertOptions } from './convert-options.generated.js';
+import { registerCliOptions } from './cli-options.generated.js';
+
+function createProgram(): Command {
+  const program = new Command();
+
+  program
+    .name('opendataloader-pdf')
+    .usage('[options] <input...>')
+    .description('Convert PDFs using the OpenDataLoader CLI.')
+    .showHelpAfterError("Use '--help' to see available options.")
+    .showSuggestionAfterError(false)
+    .argument('<input...>', 'Input files or directories to convert');
+
+  // Register CLI options from auto-generated file
+  registerCliOptions(program);
+
+  program.configureOutput({
+    writeErr: (str) => {
+      console.error(str.trimEnd());
+    },
+    outputError: (str, write) => {
+      write(str);
+    },
+  });
+
+  return program;
+}
+
+async function main(): Promise<number> {
+  const program = createProgram();
+
+  program.exitOverride();
+
+  try {
+    program.parse(process.argv);
+  } catch (err) {
+    if (err instanceof CommanderError) {
+      if (err.code === 'commander.helpDisplayed') {
+        return 0;
+      }
+      return err.exitCode ?? 1;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
+    console.error("Use '--help' to see available options.");
+    return 1;
+  }
+
+  const cliOptions = program.opts<CliOptions>();
+  const inputPaths = program.args;
+  const convertOptions = buildConvertOptions(cliOptions);
+
+  try {
+    // _runForCli streams stdout/stderr to the parent process as they arrive;
+    // we deliberately do not re-print anything here. (Issue #398.)
+    await _runForCli(inputPaths, convertOptions);
+    return 0;
+  } catch (err) {
+    // Subprocess-exit errors are already on the user's terminal via the live
+    // stderr stream — re-printing would duplicate output and risk leaking
+    // anything sensitive Java logged (e.g. a --password value echoed by an
+    // underlying library). Wrapper-side failures (JAR not found, java not in
+    // PATH, bad input path) still need to be surfaced.
+    const isJavaExit =
+      err instanceof Error && (err as Error & { isJavaExit?: boolean }).isJavaExit === true;
+    if (!isJavaExit) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(message);
+    }
+    return 1;
+  }
+}
+
+main().then((code) => {
+  if (code !== 0) {
+    process.exit(code);
+  }
+});

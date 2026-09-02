@@ -1,0 +1,82 @@
+name: Build and release James PDF
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "app/package.json version must use semantic versioning, for example 4.2.1."
+          }
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          $existingTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($existingTag) {
+            "publish=false" >> $env:GITHUB_OUTPUT
+            Write-Host "$tag already exists. No new release is required."
+          } else {
+            "publish=true" >> $env:GITHUB_OUTPUT
+          }
+      - name: Install application dependencies
+        if: steps.version.outputs.publish == 'true'
+        working-directory: app
+        run: npm ci
+
+      - name: Run updater tests
+        if: steps.version.outputs.publish == 'true'
+        working-directory: app
+        run: node --test test/update-service.test.js
+
+      - name: Bundle Node.js runtime
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        run: Copy-Item (Get-Command node.exe).Source ./node.exe -Force
+
+      - name: Build Windows installer
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        run: ./installer/build-v4.ps1
+
+      - name: Create SHA-256 checksum
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash ./JamesPDF_Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  JamesPDF_Setup.exe" | Set-Content ./JamesPDF_Setup.exe.sha256 -Encoding ascii
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" `
+            ./JamesPDF_Setup.exe `
+            ./JamesPDF_Setup.exe.sha256 `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "James PDF ${{ steps.version.outputs.version }}" `
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
