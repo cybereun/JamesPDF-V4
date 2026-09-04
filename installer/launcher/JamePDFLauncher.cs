@@ -7,17 +7,17 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("JamesPDF")]
-[assembly: AssemblyDescription("James PDF 4.2.1 launcher")]
+[assembly: AssemblyDescription("James PDF 4.2.2 launcher")]
 [assembly: AssemblyCompany("Cybereun")]
 [assembly: AssemblyProduct("James PDF")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 Cybereun")]
-[assembly: AssemblyFileVersion("4.2.1.0")]
-[assembly: AssemblyVersion("4.2.1.0")]
+[assembly: AssemblyFileVersion("4.2.2.0")]
+[assembly: AssemblyVersion("4.2.2.0")]
 
 internal static class Program
 {
     private const int DefaultPort = 5200;
-    private const string AppVersion = "4.2.1";
+    private const string AppVersion = "4.2.2";
     private const string AppTitle = "James PDF " + AppVersion;
 
     [STAThread]

@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>James Studio</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/kordoc.css">
+  <link rel="stylesheet" href="/kordoc.css?v=20260904-studio-session-v1">
   <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  <script defer src="/kordoc.js?v=20260603-form-repeat-fields-v4"></script>
+  <script defer src="/kordoc.js?v=20260904-studio-session-v1"></script>
 </head>
 <body>
   <div class="studio-shell">
@@ -20,7 +20,7 @@
         </div>
       </div>
       <div class="studio-actions">
-        <button id="backToClassicBtn" type="button" class="ghost-button"><i data-lucide="arrow-left"></i><span>Classic PDF</span></button>
+        <a id="backToClassicBtn" class="ghost-button" href="/" aria-label="Classic PDF로 이동"><i data-lucide="arrow-left"></i><span>Classic PDF</span></a>
       </div>
     </header>
 
@@ -30,6 +30,71 @@
       <button type="button" data-view="compareView"><i data-lucide="git-compare"></i><span>비교</span></button>
       <button type="button" data-view="formsView"><i data-lucide="table-properties"></i><span>양식</span></button>
     </nav>
+
+    <section class="studio-commandbar" aria-label="James Studio 빠른 실행">
+      <div class="studio-command-group studio-command-group-primary">
+        <button type="button" class="studio-command-button is-primary" data-studio-trigger="open" title="문서 열기">
+          <i data-lucide="folder-open"></i><span>열기</span>
+        </button>
+        <button type="button" class="studio-command-button" data-studio-trigger="parse" title="문서 분석 실행">
+          <i data-lucide="scan-text"></i><span>분석</span>
+        </button>
+      </div>
+      <div class="studio-command-group">
+        <button type="button" class="studio-command-button" data-studio-view="recreateView" title="결과 문서 재생성">
+          <i data-lucide="file-output"></i><span>재생성</span>
+        </button>
+        <button type="button" class="studio-command-button" data-studio-view="compareView" title="문서 비교">
+          <i data-lucide="git-compare"></i><span>비교</span>
+        </button>
+        <button type="button" class="studio-command-button" data-studio-view="formsView" title="양식 필드 작업">
+          <i data-lucide="table-properties"></i><span>양식</span>
+        </button>
+      </div>
+      <div class="studio-command-context" aria-live="polite">
+        <i data-lucide="layers-3"></i>
+        <div>
+          <strong id="studioCommandTitle">문서 작업 스튜디오</strong>
+          <span id="studioCommandNote">파싱·재생성·비교·양식</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="studio-ribbon" aria-label="James Studio 도구 리본">
+      <div class="studio-ribbon-group">
+        <button type="button" class="studio-ribbon-button" data-studio-trigger="open" title="문서 열기">
+          <i data-lucide="file-up"></i><span>문서 열기</span>
+        </button>
+        <button type="button" class="studio-ribbon-button" data-studio-trigger="parse" title="문서 분석 실행">
+          <i data-lucide="scan-text"></i><span>분석 실행</span>
+        </button>
+        <span class="studio-ribbon-group-title">문서 분석</span>
+      </div>
+      <div class="studio-ribbon-group">
+        <button type="button" class="studio-ribbon-button" data-studio-view="recreateView" title="결과 문서 재생성">
+          <i data-lucide="file-output"></i><span>재생성</span>
+        </button>
+        <button type="button" class="studio-ribbon-button" data-studio-view="compareView" title="문서 비교">
+          <i data-lucide="git-compare"></i><span>비교</span>
+        </button>
+        <button type="button" class="studio-ribbon-button" data-studio-view="formsView" title="양식 필드 작업">
+          <i data-lucide="table-properties"></i><span>양식</span>
+        </button>
+        <span class="studio-ribbon-group-title">작업 모드</span>
+      </div>
+      <div class="studio-ribbon-group">
+        <button type="button" class="studio-ribbon-button compact" data-studio-result-tab="markdownPanel" title="Markdown 결과 보기">
+          <i data-lucide="file-text"></i><span>MD</span>
+        </button>
+        <button type="button" class="studio-ribbon-button compact" data-studio-result-tab="jsonPanel" title="JSON 결과 보기">
+          <i data-lucide="braces"></i><span>JSON</span>
+        </button>
+        <button type="button" class="studio-ribbon-button compact" data-studio-result-tab="previewPanel" title="HTML 미리보기">
+          <i data-lucide="layout-template"></i><span>미리보기</span>
+        </button>
+        <span class="studio-ribbon-group-title">결과 보기</span>
+      </div>
+    </section>
 
     <main class="studio-workspace">
       <aside class="studio-left">

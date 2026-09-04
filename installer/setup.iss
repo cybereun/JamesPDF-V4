@@ -1,7 +1,7 @@
-﻿; James PDF V4.2.0.0 standalone installer
+﻿; James PDF V4.2.2 standalone installer
 
 #define MyAppName "James PDF"
-#define MyAppVersion "4.2.1"
+#define MyAppVersion "4.2.2"
 #define MyAppPublisher "Cybereun"
 #define MyAppExeName "JamePDF.exe"
 
@@ -59,7 +59,7 @@ Name: "{app}\app\data"
 Name: "{app}\app\outputs"
 
 [Files]
-Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: ".git\*,.github\*,JamesPDF_Setup.exe,installer\Output\*,새 폴더\*,node\*,app\uploads\*,app\outputs\*,app\data\*,app\test\*"
+Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: ".git\*,.jamespdf-git\*,.github\*,JamesPDF_Setup.exe,installer\Output\*,새 폴더\*,node\*,app\uploads\*,app\outputs\*,app\output\*,app\data\*,app\test\*"
 Source: "images\app_icon.ico"; DestDir: "{app}\installer\images"; Flags: ignoreversion
 
 [Icons]

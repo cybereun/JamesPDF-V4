@@ -7,6 +7,11 @@ const state = {
   pageCount: 0,
   scale: 1.2,
   pageText: '',
+  selectedPages: new Set(),
+  undoStack: [],
+  redoStack: [],
+  historyBusy: false,
+  documentDirty: false,
   lastPdfUrl: '',
   saveHandle: null,
   saveToken: '',
@@ -21,11 +26,24 @@ const state = {
   searchResults: [],
   searchActiveIndex: -1,
   rightbarCollapsed: false,
+  rightbarWidth: 372,
+  ribbonCompact: false,
   aiProviders: {},
   aiAbortController: null,
   aiModelSelections: {},
   availableUpdate: null,
   updateInstalling: false,
+  recentDocuments: [],
+  recentDocumentsQuery: '',
+  pdfOperationAbortController: null,
+  pdfOperationJobId: '',
+  lastFailedPdfOperation: null,
+  operationStageState: 'idle',
+  operationStageTimer: null,
+  pdfOperationLabel: '',
+  shortcutsReturnFocus: null,
+  thumbnailDrag: null,
+  suppressThumbnailClick: false,
 };
 
 const els = {};
@@ -73,8 +91,26 @@ const AI_MODEL_PRESETS = {
 };
 
 const RIGHTBAR_PREF_KEY = 'jamepdf:rightbarCollapsed';
+const RIGHTBAR_WIDTH_PREF_KEY = 'jamepdf:rightbarWidth';
+const RIGHTBAR_DEFAULT_WIDTH = 372;
+const RIGHTBAR_MIN_WIDTH = 300;
+const RIGHTBAR_MAX_WIDTH = 560;
 const RIGHTBAR_LABEL_HIDE = '\uc624\ub978\ucabd \ud328\ub110 \uc228\uae30\uae30';
 const RIGHTBAR_LABEL_SHOW = '\uc624\ub978\ucabd \ud328\ub110 \ubcf4\uc774\uae30';
+const RIBBON_DENSITY_PREF_KEY = 'jamepdf:ribbonCompact';
+const DOCUMENT_VIEW_PREF_KEY = 'jamepdf:documentViewState';
+const STUDIO_DOCUMENT_QUERY_KEY = 'documentId';
+const REMOVE_DOCUMENT_ON_CLOSE = false;
+
+const COMMAND_CONTEXT_META = {
+  file: { title: '\ud30c\uc77c', note: '\ubb38\uc11c\ub97c \uc5f4\uace0 \uc800\uc7a5\ud569\ub2c8\ub2e4' },
+  home: { title: '\ud648', note: '\ud398\uc774\uc9c0\uc640 \ud14d\uc2a4\ud2b8\ub97c \uad00\ub9ac\ud569\ub2c8\ub2e4' },
+  view: { title: '\ubcf4\uae30', note: '\ud398\uc774\uc9c0 \ubc30\uc728\uacfc \ud328\ub110\uc744 \uc870\uc808\ud569\ub2c8\ub2e4' },
+  edit: { title: '\ud3b8\uc9d1', note: '\ud14d\uc2a4\ud2b8\uc640 \ud398\uc774\uc9c0\ub97c \uc218\uc815\ud569\ub2c8\ub2e4' },
+  convert: { title: '\ubcc0\ud658', note: '\ud30c\uc77c\uc744 \ubcd1\ud569\ud558\uace0 \ubcc0\ud658\ud569\ub2c8\ub2e4' },
+  security: { title: '\ubcf4\uc548', note: '\ubb38\uc11c \uc554\ud638\ub97c \uad00\ub9ac\ud569\ub2c8\ub2e4' },
+  ai: { title: 'AI', note: 'AI Agent\ub85c \ubb38\uc11c \uc791\uc5c5\uc744 \ub3c4\uc6c0\ubc1b\uc2b5\ub2c8\ub2e4' },
+};
 
 document.addEventListener('DOMContentLoaded', () => {
   cacheElements();
@@ -82,8 +118,16 @@ document.addEventListener('DOMContentLoaded', () => {
   bindUi();
   renderAiModelOptions();
   initRightbarToggle();
+  initRightbarResize();
+  initRibbonDensity();
+  updateCommandbarContext('file');
+  updateHistoryButtons();
+  updatePageSelectionUi();
+  setDocumentDirty(false);
+  syncStudioNavigationContext();
   loadHealth();
   loadDocuments();
+  restoreSharedDocumentFromQuery();
   refreshIcons();
   loadSystemFonts();
   setTimeout(() => checkForAppUpdate(), 3500);
@@ -99,6 +143,7 @@ function cacheElements() {
     'openPdfInput',
     'saveCurrentBtn',
     'closePdfBtn',
+    'recentDocumentsBtn',
     'prevPageBtn',
     'nextPageBtn',
     'pageNumberInput',
@@ -109,6 +154,12 @@ function cacheElements() {
     'copyPageTextBtn',
     'extractBtn',
     'thumbCount',
+    'selectedPageCount',
+    'selectAllPagesBtn',
+    'deleteSelectedPagesBtn',
+    'duplicateSelectedPagesBtn',
+    'movePageUpBtn',
+    'movePageDownBtn',
     'thumbnailList',
     'dropOverlay',
     'canvasHost',
@@ -120,6 +171,17 @@ function cacheElements() {
     'closeSaveDialogBtn',
     'cancelSaveDialogBtn',
     'saveNote',
+    'recentDocumentsDialog',
+    'recentDocumentsSearch',
+    'recentDocumentsList',
+    'recentDocumentsCount',
+    'closeRecentDocumentsBtn',
+    'closeRecentDocumentsBtnFooter',
+    'refreshRecentDocumentsBtn',
+    'shortcutsBtn',
+    'shortcutsDialog',
+    'closeShortcutsDialogBtn',
+    'closeShortcutsDialogFooterBtn',
     'updateDialog',
     'updateVersionSummary',
     'updateCurrentVersion',
@@ -200,9 +262,22 @@ function cacheElements() {
     'aiSendBtn',
     'aiClearBtn',
     'documentName',
+    'viewerDocumentName',
+    'viewerDocumentState',
+    'documentDirtyState',
     'pageStatus',
+    'viewerPageBadge',
     'zoomStatus',
+    'viewerZoomBadge',
     'operationStatus',
+    'operationStateCard',
+    'operationStateIcon',
+    'operationStateTitle',
+    'operationStateDetail',
+    'operationStateProgress',
+    'operationStateAction',
+    'operationProgress',
+    'cancelOperationBtn',
     'toast',
     'toolSelectBtn',
     'toolTextBtn',
@@ -226,6 +301,13 @@ function cacheElements() {
     'widgetSearchNext',
     'closeSearchWidgetBtn',
     'rightbarToggleBtn',
+    'rightbarResizeHandle',
+    'ribbonDensityBtn',
+    'undoBtn',
+    'redoBtn',
+    'commandbarContext',
+    'commandbarContextTitle',
+    'commandbarContextNote',
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
@@ -530,16 +612,13 @@ function bindUi() {
     const file = els.openPdfInput.files[0];
     if (file) uploadAndOpenPdf(file);
   });
-  if (els.aiiStudioBtn) {
-    els.aiiStudioBtn.addEventListener('click', () => {
-      window.location.href = '/kordoc';
-    });
-  }
-
   els.saveCurrentBtn.addEventListener('click', () => {
     openSaveDialog();
   });
   els.closePdfBtn.addEventListener('click', closeCurrentPdf);
+  els.recentDocumentsBtn.addEventListener('click', openRecentDocuments);
+  els.cancelOperationBtn.addEventListener('click', cancelPdfOperation);
+  els.operationStateAction.addEventListener('click', cancelPdfOperation);
   els.saveCurrentLocationBtn.addEventListener('click', () => saveCurrentPdf('current'));
   els.saveAsBtn.addEventListener('click', () => saveCurrentPdf('saveAs'));
   els.closeSaveDialogBtn.addEventListener('click', closeSaveDialog);
@@ -547,15 +626,38 @@ function bindUi() {
   els.saveDialog.addEventListener('click', (event) => {
     if (event.target === els.saveDialog) closeSaveDialog();
   });
+  els.closeRecentDocumentsBtn.addEventListener('click', closeRecentDocuments);
+  els.closeRecentDocumentsBtnFooter.addEventListener('click', closeRecentDocuments);
+  els.refreshRecentDocumentsBtn.addEventListener('click', () => loadDocuments());
+  els.recentDocumentsSearch.addEventListener('input', () => {
+    state.recentDocumentsQuery = els.recentDocumentsSearch.value;
+    renderRecentDocuments();
+  });
+  els.recentDocumentsDialog.addEventListener('click', (event) => {
+    if (event.target === els.recentDocumentsDialog) closeRecentDocuments();
+  });
   els.closeUpdateDialogBtn.addEventListener('click', closeUpdateDialog);
   els.laterUpdateBtn.addEventListener('click', closeUpdateDialog);
   els.installUpdateBtn.addEventListener('click', installAppUpdate);
   els.updateDialog.addEventListener('click', (event) => {
     if (event.target === els.updateDialog && !state.updateInstalling) closeUpdateDialog();
   });
+  els.shortcutsBtn.addEventListener('click', openShortcutsDialog);
+  els.closeShortcutsDialogBtn.addEventListener('click', closeShortcutsDialog);
+  els.closeShortcutsDialogFooterBtn.addEventListener('click', closeShortcutsDialog);
+  els.shortcutsDialog.addEventListener('click', (event) => {
+    if (event.target === els.shortcutsDialog) closeShortcutsDialog();
+  });
   els.prevPageBtn.addEventListener('click', () => goToPage(state.page - 1));
   els.nextPageBtn.addEventListener('click', () => goToPage(state.page + 1));
   els.pageNumberInput.addEventListener('change', () => goToPage(Number(els.pageNumberInput.value)));
+  els.undoBtn.addEventListener('click', undoPdfEdit);
+  els.redoBtn.addEventListener('click', redoPdfEdit);
+  els.selectAllPagesBtn.addEventListener('click', toggleSelectAllPages);
+  els.deleteSelectedPagesBtn.addEventListener('click', deleteSelectedPages);
+  els.duplicateSelectedPagesBtn.addEventListener('click', duplicateSelectedPages);
+  els.movePageUpBtn.addEventListener('click', () => moveSelectedPages('up'));
+  els.movePageDownBtn.addEventListener('click', () => moveSelectedPages('down'));
   els.zoomOutBtn.addEventListener('click', () => setZoom(state.scale - 0.15));
   els.zoomInBtn.addEventListener('click', () => setZoom(state.scale + 0.15));
   els.fitWidthBtn.addEventListener('click', fitWidth);
@@ -617,6 +719,11 @@ function bindUi() {
       setRightbarCollapsed(!state.rightbarCollapsed);
     });
   }
+  if (els.ribbonDensityBtn) {
+    els.ribbonDensityBtn.addEventListener('click', () => {
+      setRibbonCompact(!state.ribbonCompact);
+    });
+  }
 
   els.mergeFilesInput.addEventListener('change', () => {
     els.mergeFileLabel.textContent = `${els.mergeFilesInput.files.length}개 PDF 선택`;
@@ -649,6 +756,23 @@ function bindUi() {
     button.addEventListener('click', () => {
       showSidePanel(button.dataset.panel || button.dataset.sideTab);
       focusPanelControl(button.dataset.focus);
+    });
+  });
+
+  const sideTabs = [...document.querySelectorAll('[data-side-tab]')];
+  sideTabs.forEach((tab, index) => {
+    tab.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const direction = event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 1;
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? sideTabs.length - 1
+          : (index + direction + sideTabs.length) % sideTabs.length;
+      const nextTab = sideTabs[nextIndex];
+      nextTab.focus();
+      nextTab.click();
     });
   });
 
@@ -702,13 +826,70 @@ function bindUi() {
   });
 
   document.addEventListener('keydown', (event) => {
+    const key = event.key.toLowerCase();
+    const hasModifier = event.ctrlKey || event.metaKey;
+    const targetTag = event.target?.tagName;
+    const isFormField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetTag);
+    const isInteractiveTarget = ['BUTTON', 'A', 'SELECT'].includes(targetTag) || event.target?.isContentEditable;
+
+    if (hasModifier && !isFormField) {
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        undoPdfEdit();
+        return;
+      }
+      if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        event.preventDefault();
+        redoPdfEdit();
+        return;
+      }
+      if (key === 'o') {
+        event.preventDefault();
+        els.openPdfInput.click();
+        return;
+      }
+      if (key === 's') {
+        event.preventDefault();
+        openSaveDialog();
+        return;
+      }
+      if (key === 'p') {
+        event.preventDefault();
+        openPrintDialog('runPrintBtn');
+        return;
+      }
+    }
+
+    if (!hasModifier && !isFormField && !isInteractiveTarget && state.pdf) {
+      if (event.key === 'PageUp') {
+        event.preventDefault();
+        void goToPage(state.page - 1);
+        return;
+      }
+      if (event.key === 'PageDown') {
+        event.preventDefault();
+        void goToPage(state.page + 1);
+        return;
+      }
+    }
+
+    if (!hasModifier && !isFormField && !isInteractiveTarget && (event.key === '?' || (event.shiftKey && event.key === '/'))) {
+      event.preventDefault();
+      openShortcutsDialog();
+      return;
+    }
+
     if (event.key === 'Escape') {
       if (!els.saveDialog.classList.contains('hidden')) {
         closeSaveDialog();
+      } else if (!els.recentDocumentsDialog.classList.contains('hidden')) {
+        closeRecentDocuments();
       } else if (!els.printDialog.classList.contains('hidden')) {
         closePrintDialog();
       } else if (!els.updateDialog.classList.contains('hidden') && !state.updateInstalling) {
         closeUpdateDialog();
+      } else if (!els.shortcutsDialog.classList.contains('hidden')) {
+        closeShortcutsDialog();
       } else if (!els.searchWidget.classList.contains('hidden')) {
         hideSearchWidget();
       } else if (state.activeAnnotationId && !state.isEditingText) {
@@ -716,7 +897,7 @@ function bindUi() {
       }
     } else if (event.key === 'Delete' && state.activeAnnotationId && !state.isEditingText) {
       deleteAnnotation(state.activeAnnotationId);
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    } else if (hasModifier && key === 'f') {
       event.preventDefault();
       toggleSearchWidget();
     }
@@ -760,6 +941,34 @@ function closeUpdateDialog() {
   if (state.updateInstalling) return;
   els.updateDialog.classList.add('hidden');
   document.body.classList.remove('modal-open');
+}
+
+function openShortcutsDialog() {
+  const activeElement = document.activeElement;
+  state.shortcutsReturnFocus = activeElement instanceof HTMLElement && activeElement !== document.body
+    ? activeElement
+    : null;
+  els.shortcutsDialog.classList.remove('hidden');
+  els.shortcutsDialog.classList.add('is-open');
+  document.body.classList.add('modal-open');
+  refreshIcons();
+  focusPanelControl('closeShortcutsDialogBtn');
+}
+
+function closeShortcutsDialog() {
+  els.shortcutsDialog.classList.add('hidden');
+  els.shortcutsDialog.classList.remove('is-open');
+  if (
+    els.saveDialog.classList.contains('hidden')
+    && els.recentDocumentsDialog.classList.contains('hidden')
+    && els.printDialog.classList.contains('hidden')
+    && els.updateDialog.classList.contains('hidden')
+  ) {
+    document.body.classList.remove('modal-open');
+  }
+  const returnFocus = state.shortcutsReturnFocus;
+  state.shortcutsReturnFocus = null;
+  if (returnFocus?.isConnected) returnFocus.focus();
 }
 
 async function installAppUpdate() {
@@ -824,8 +1033,10 @@ async function loadHealth() {
     els.securityNote.textContent = hasQpdf ? '' : '암호 설정·해제는 qpdf 설치 후 활성화됩니다.';
     els.compressNote.textContent = hasGs ? '' : 'Ghostscript가 없어 압축은 객체 재저장 방식으로 동작합니다.';
     if (els.aiiStudioBtn) {
-      els.aiiStudioBtn.disabled = !hasKordocStudio;
-      els.aiiStudioBtn.title = hasKordocStudio ? 'James Studio' : 'James Studio 빌드가 필요합니다.';
+      els.aiiStudioBtn.title = hasKordocStudio
+        ? 'James Studio 열기'
+        : 'James Studio 구성 요소를 확인하는 중입니다. 그래도 열 수 있습니다.';
+      els.aiiStudioBtn.setAttribute('data-studio-ready', hasKordocStudio ? 'true' : 'false');
     }
     if (els.extractNote) {
       els.extractNote.textContent = hasHybrid ? '' : '추출은 실행 시 Hybrid OCR/Formula 서버를 자동으로 시작합니다.';
@@ -927,7 +1138,7 @@ function setAiConnectionState(mode, text) {
   if (label) label.textContent = text;
 }
 
-async function loadDocuments() {
+async function loadLegacyDocuments() {
   // 앱 시작 시 이전 문서를 자동으로 불러오는 것을 방지하고 항상 클린 상태(빈 화면)로 시작하도록 비활성화합니다.
   /*
   try {
@@ -944,7 +1155,245 @@ async function loadDocuments() {
   */
 }
 
+function formatRecentDocumentSize(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return (value / (1024 ** index)).toFixed(index ? 1 : 0) + ' ' + units[index];
+}
+
+function formatRecentDocumentDate(doc) {
+  const raw = doc.lastOpenedAt || doc.date;
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('ko-KR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function recentDocumentMatches(doc, query) {
+  if (!query) return true;
+  const values = [
+    doc.originalName,
+    doc.filename,
+    formatRecentDocumentDate(doc),
+  ];
+  return values.some((value) => String(value || '').toLocaleLowerCase('ko-KR').includes(query));
+}
+
+function renderRecentDocuments() {
+  if (!els.recentDocumentsList) return;
+
+  const query = String(state.recentDocumentsQuery || '').trim().toLocaleLowerCase('ko-KR');
+  const documents = [...state.recentDocuments]
+    .sort((a, b) => {
+      const left = new Date(a.lastOpenedAt || a.date || 0).getTime();
+      const right = new Date(b.lastOpenedAt || b.date || 0).getTime();
+      return right - left;
+    })
+    .filter((doc) => recentDocumentMatches(doc, query));
+
+  els.recentDocumentsList.innerHTML = '';
+  if (els.recentDocumentsCount) {
+    els.recentDocumentsCount.textContent = documents.length + ' / ' + state.recentDocuments.length + '개';
+  }
+
+  if (!documents.length) {
+    const empty = document.createElement('div');
+    empty.className = 'recent-documents-empty';
+    empty.textContent = state.recentDocuments.length
+      ? '검색 결과가 없습니다.'
+      : '최근 문서가 없습니다.';
+    els.recentDocumentsList.appendChild(empty);
+    return;
+  }
+
+  documents.forEach((doc) => {
+    const item = document.createElement('article');
+    item.className = 'recent-document-item';
+    if (doc.available === false) item.classList.add('is-missing');
+
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'recent-document-open';
+    openButton.disabled = doc.available === false;
+
+    const icon = document.createElement('i');
+    icon.setAttribute('data-lucide', doc.available === false ? 'file-warning' : 'file-text');
+    const details = document.createElement('span');
+    details.className = 'recent-document-details';
+    const name = document.createElement('strong');
+    name.textContent = doc.originalName || doc.filename || '이름 없는 PDF';
+    const meta = document.createElement('span');
+    const metaParts = [
+      formatRecentDocumentDate(doc),
+      formatRecentDocumentSize(doc.size),
+      Number(doc.pageCount) > 0 ? String(doc.pageCount) + '페이지' : '',
+    ].filter(Boolean);
+    meta.textContent = metaParts.join(' · ');
+    details.append(name, meta);
+    openButton.append(icon, details);
+
+    if (doc.available === false) {
+      const missing = document.createElement('span');
+      missing.className = 'recent-document-missing';
+      missing.textContent = '원본 파일 없음';
+      details.appendChild(missing);
+    } else {
+      openButton.addEventListener('click', () => openRecentDocument(doc));
+    }
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'mini-button recent-document-delete';
+    deleteButton.title = '이 문서와 분석 결과 삭제';
+    deleteButton.setAttribute('aria-label', '이 문서와 분석 결과 삭제');
+    deleteButton.innerHTML = '<i data-lucide="trash-2"></i>';
+    deleteButton.addEventListener('click', () => deleteRecentDocument(doc));
+
+    item.append(openButton, deleteButton);
+    els.recentDocumentsList.appendChild(item);
+  });
+  refreshIcons();
+}
+
+async function loadDocuments() {
+  try {
+    const documents = await requestJson('/api/documents');
+    state.recentDocuments = Array.isArray(documents) ? documents : [];
+  } catch (error) {
+    state.recentDocuments = [];
+    console.warn('Failed to load recent documents:', error);
+  }
+  renderRecentDocuments();
+  return state.recentDocuments;
+}
+
+function syncStudioNavigationContext() {
+  if (!els.aiiStudioBtn) return;
+  const url = new URL('/kordoc', window.location.href);
+  const documentId = String(state.document?.id || '').trim();
+  if (documentId) {
+    url.searchParams.set(STUDIO_DOCUMENT_QUERY_KEY, documentId);
+    if (Number.isInteger(Number(state.page)) && Number(state.page) > 0) {
+      url.searchParams.set('page', String(state.page));
+    }
+  }
+  els.aiiStudioBtn.href = `${url.pathname}${url.search}`;
+}
+
+async function restoreSharedDocumentFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const documentId = String(params.get(STUDIO_DOCUMENT_QUERY_KEY) || '').trim();
+  if (!documentId) return;
+
+  try {
+    resetPdfHistory();
+    setOperationStatus('공유 문서 여는 중');
+    const documentInfo = await requestJson('/api/documents/' + encodeURIComponent(documentId) + '/open', {
+      method: 'POST',
+    });
+    state.document = documentInfo;
+    state.currentBlob = null;
+    state.currentFilename = documentInfo.originalName || 'document.pdf';
+    await loadPdfFromUrl(documentInfo.url, state.currentFilename);
+
+    const requestedPage = Number(params.get('page'));
+    if (Number.isInteger(requestedPage) && requestedPage > 0) {
+      await goToPage(requestedPage);
+    }
+
+    syncStudioNavigationContext();
+    setOperationStatus('공유 문서 열림');
+    showToast('James Studio에서 이어서 작업할 문서를 열었습니다.');
+
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete(STUDIO_DOCUMENT_QUERY_KEY);
+    cleanUrl.searchParams.delete('page');
+    window.history.replaceState({}, document.title, `${cleanUrl.pathname}${cleanUrl.search}`);
+  } catch (error) {
+    setOperationStatus('공유 문서 열기 실패');
+    showToast(error.message || '공유 문서를 열 수 없습니다.', true);
+  }
+}
+
+async function openRecentDocuments() {
+  els.recentDocumentsDialog.classList.remove('hidden');
+  els.recentDocumentsDialog.classList.add('is-open');
+  document.body.classList.add('modal-open');
+  await loadDocuments();
+  refreshIcons();
+  if (els.recentDocumentsSearch) {
+    els.recentDocumentsSearch.focus();
+    els.recentDocumentsSearch.select();
+  }
+}
+
+function closeRecentDocuments() {
+  els.recentDocumentsDialog.classList.add('hidden');
+  els.recentDocumentsDialog.classList.remove('is-open');
+  if (
+    els.saveDialog.classList.contains('hidden')
+    && els.printDialog.classList.contains('hidden')
+    && els.updateDialog.classList.contains('hidden')
+  ) {
+    document.body.classList.remove('modal-open');
+  }
+}
+
+async function openRecentDocument(doc) {
+  if (!doc || doc.available === false) return;
+  if (state.pdf && state.document?.id !== doc.id) {
+    const proceed = window.confirm('현재 문서를 닫고 선택한 최근 문서를 열까요? 저장하지 않은 변경 사항은 사라질 수 있습니다.');
+    if (!proceed) return;
+  }
+
+  resetPdfHistory();
+  try {
+    setOperationStatus('최근 문서를 여는 중');
+    const updated = await requestJson('/api/documents/' + encodeURIComponent(doc.id) + '/open', {
+      method: 'POST',
+    });
+    state.document = updated || doc;
+    state.currentBlob = null;
+    state.currentFilename = state.document.originalName || doc.originalName || 'document.pdf';
+    await loadPdfFromUrl(state.document.url || doc.url, state.currentFilename);
+    syncStudioNavigationContext();
+    closeRecentDocuments();
+    setOperationStatus('최근 문서 열림');
+    showToast('최근 문서를 열었습니다.');
+    await loadDocuments();
+  } catch (error) {
+    setOperationStatus('최근 문서 열기 실패');
+    showToast(error.message || '최근 문서를 열 수 없습니다.', true);
+  }
+}
+
+async function deleteRecentDocument(doc) {
+  if (!doc?.id) return;
+  const name = doc.originalName || doc.filename || '선택한 문서';
+  const proceed = window.confirm('"' + name + '"과 저장된 분석 결과를 삭제할까요? 이 작업은 되돌릴 수 없습니다.');
+  if (!proceed) return;
+
+  try {
+    await requestJson('/api/documents/' + encodeURIComponent(doc.id), {
+      method: 'DELETE',
+    });
+    if (state.document?.id === doc.id) {
+      await closeCurrentPdf();
+    }
+    await loadDocuments();
+    showToast('최근 문서와 분석 결과를 삭제했습니다.');
+  } catch (error) {
+    showToast(error.message || '최근 문서를 삭제할 수 없습니다.', true);
+  }
+}
+
 async function uploadAndOpenPdf(file) {
+  resetPdfHistory();
   setOperationStatus('업로드 중');
   const form = new FormData();
   form.append('file', file);
@@ -954,6 +1403,7 @@ async function uploadAndOpenPdf(file) {
     state.currentBlob = file;
     state.currentFilename = doc.originalName || file.name;
     await loadPdfFromUrl(doc.url, state.currentFilename);
+    syncStudioNavigationContext();
     setOperationStatus('열기 완료');
     showToast('PDF를 열었습니다.');
   } catch (error) {
@@ -969,7 +1419,7 @@ async function closeCurrentPdf() {
   }
 
   // 1. 디바이스 용량 정리를 위해 백엔드에 파일 삭제 요청
-  if (state.document && state.document.id) {
+  if (REMOVE_DOCUMENT_ON_CLOSE && state.document && state.document.id) {
     setOperationStatus('문서 정리 중');
     try {
       await requestJson(`/api/documents/${state.document.id}`, {
@@ -995,8 +1445,11 @@ async function closeCurrentPdf() {
   state.lastPdfUrl = '';
   state.extractedJson = null;
   state.extractedMarkdown = '';
+  syncStudioNavigationContext();
   state.annotations = [];
   state.activeAnnotationId = null;
+  state.selectedPages.clear();
+  resetPdfHistory();
 
   // 3. UI 컴포넌트 초기화
   els.pdfCanvas.style.display = 'none';
@@ -1007,6 +1460,7 @@ async function closeCurrentPdf() {
   
   els.thumbnailList.innerHTML = '';
   els.thumbCount.textContent = '0';
+  updatePageSelectionUi();
   els.documentName.textContent = '문서 없음';
   els.pageCountLabel.textContent = '/ 0';
   els.pageNumberInput.value = '1';
@@ -1019,6 +1473,40 @@ async function closeCurrentPdf() {
   updateOcrOverlayBoxes();
   
   els.openPdfInput.value = '';
+  showToast('문서를 닫았습니다. 최근 문서에서 다시 열 수 있습니다.');
+}
+
+function readDocumentViewStates() {
+  try {
+    const value = JSON.parse(localStorage.getItem(DOCUMENT_VIEW_PREF_KEY) || '{}');
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function getDocumentViewState(documentId) {
+  if (!documentId) return null;
+  return readDocumentViewStates()[documentId] || null;
+}
+
+function saveDocumentViewState() {
+  const documentId = state.document?.id;
+  if (!documentId) return;
+  try {
+    const states = readDocumentViewStates();
+    states[documentId] = {
+      page: state.page,
+      scale: state.scale,
+      updatedAt: new Date().toISOString(),
+    };
+    const entries = Object.entries(states)
+      .sort((left, right) => String(right[1]?.updatedAt || '').localeCompare(String(left[1]?.updatedAt || '')))
+      .slice(0, 80);
+    localStorage.setItem(DOCUMENT_VIEW_PREF_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // localStorage may be unavailable in a restricted browser context.
+  }
 }
 
 async function loadPdfFromUrl(url, filename) {
@@ -1029,15 +1517,21 @@ async function loadPdfFromUrl(url, filename) {
   state.extractedJson = null; // 분석 결과 초기화
   const loadingTask = window.pdfjsLib.getDocument(url);
   state.pdf = await loadingTask.promise;
-  state.page = 1;
+  const viewState = getDocumentViewState(state.document?.id);
+  state.page = Math.max(1, Math.min(state.pdf.numPages, Number(viewState?.page) || 1));
+  if (Number.isFinite(Number(viewState?.scale))) {
+    state.scale = Math.max(0.35, Math.min(3.5, Number(viewState.scale)));
+  }
   state.pageCount = state.pdf.numPages;
+  state.selectedPages.clear();
   state.currentFilename = filename || state.currentFilename || 'document.pdf';
   els.documentName.textContent = state.currentFilename;
   els.pageCountLabel.textContent = `/ ${state.pageCount}`;
   els.thumbCount.textContent = state.pageCount;
   document.querySelector('.viewer').classList.add('has-document');
-  await renderPage(1);
+  await renderPage(state.page);
   renderThumbnails();
+  updatePageSelectionUi();
   updateStatus();
 
   // 백그라운드 자동 분석 실행
@@ -1060,6 +1554,7 @@ async function loadPdfFromBlob(blob, filename) {
     const doc = await requestJson('/api/upload', { method: 'POST', body: form });
     state.document = doc;
     els.documentName.textContent = state.currentFilename;
+    syncStudioNavigationContext();
     runBackgroundExtraction(doc.id);
   } catch (err) {
     console.error('Failed to background upload blob:', err);
@@ -1109,7 +1604,21 @@ async function renderThumbnails() {
     item.append(canvas, label);
     els.thumbnailList.appendChild(item);
 
-    item.addEventListener('click', () => goToPage(pageNumber));
+    item.setAttribute('aria-pressed', 'false');
+    item.title = '드래그하여 페이지 순서 변경';
+    item.draggable = true;
+    item.addEventListener('click', (event) => {
+      if (state.suppressThumbnailClick) {
+        state.suppressThumbnailClick = false;
+        return;
+      }
+      handleThumbnailSelection(pageNumber, event);
+    });
+    item.addEventListener('dragstart', (event) => handleThumbnailDragStart(event, pageNumber, item));
+    item.addEventListener('dragover', (event) => handleThumbnailDragOver(event, pageNumber, item));
+    item.addEventListener('dragleave', () => handleThumbnailDragLeave(item));
+    item.addEventListener('drop', (event) => handleThumbnailDrop(event, pageNumber, item));
+    item.addEventListener('dragend', () => handleThumbnailDragEnd(item));
 
     try {
       const page = await state.pdf.getPage(pageNumber);
@@ -1126,7 +1635,12 @@ async function renderThumbnails() {
 
 function highlightActiveThumbnail() {
   els.thumbnailList.querySelectorAll('.thumb-item').forEach((item) => {
-    item.classList.toggle('is-active', Number(item.dataset.page) === state.page);
+    const pageNumber = Number(item.dataset.page);
+    const isActive = pageNumber === state.page;
+    const isSelected = state.selectedPages.has(pageNumber);
+    item.classList.toggle('is-active', isActive);
+    item.classList.toggle('is-selected', isSelected);
+    item.setAttribute('aria-pressed', String(isSelected));
   });
 }
 
@@ -1134,11 +1648,14 @@ async function goToPage(pageNumber) {
   if (!state.pdf) return;
   const target = Math.max(1, Math.min(state.pageCount, Number(pageNumber) || 1));
   state.page = target;
+  saveDocumentViewState();
+  syncStudioNavigationContext();
   await renderPage(target);
 }
 
 async function setZoom(scale) {
   state.scale = Math.max(0.35, Math.min(3.5, Number(scale) || 1));
+  saveDocumentViewState();
   if (state.pdf) await renderPage(state.page);
 }
 
@@ -1148,7 +1665,337 @@ async function fitWidth() {
   const viewport = page.getViewport({ scale: 1 });
   const hostWidth = Math.max(320, els.canvasHost.clientWidth - 70);
   state.scale = Math.max(0.35, Math.min(3.5, hostWidth / viewport.width));
+  saveDocumentViewState();
   await renderPage(state.page);
+}
+
+function handleThumbnailSelection(pageNumber, event) {
+  if (!state.pdf) return;
+
+  if (event.shiftKey && state.selectedPages.size > 0) {
+    const anchor = state.page || pageNumber;
+    const start = Math.min(anchor, pageNumber);
+    const end = Math.max(anchor, pageNumber);
+    state.selectedPages = new Set();
+    for (let current = start; current <= end; current += 1) state.selectedPages.add(current);
+  } else if (event.ctrlKey || event.metaKey) {
+    const next = new Set(state.selectedPages);
+    if (next.has(pageNumber)) next.delete(pageNumber);
+    else next.add(pageNumber);
+    state.selectedPages = next;
+  } else {
+    state.selectedPages = new Set([pageNumber]);
+  }
+
+  updatePageSelectionUi();
+  goToPage(pageNumber);
+}
+
+function updatePageSelectionUi() {
+  const hasDocument = Boolean(state.pdf && state.pageCount > 0);
+  const selectedCount = state.selectedPages.size;
+  const allSelected = hasDocument && selectedCount === state.pageCount;
+
+  if (els.selectedPageCount) {
+    els.selectedPageCount.textContent = `${selectedCount} 선택`;
+  }
+  if (els.selectAllPagesBtn) {
+    els.selectAllPagesBtn.disabled = !hasDocument;
+    els.selectAllPagesBtn.setAttribute('aria-pressed', String(allSelected));
+    els.selectAllPagesBtn.setAttribute('title', allSelected ? '전체 페이지 선택 해제' : '전체 페이지 선택');
+    els.selectAllPagesBtn.setAttribute('aria-label', allSelected ? '전체 페이지 선택 해제' : '전체 페이지 선택');
+    const label = els.selectAllPagesBtn.querySelector('span');
+    if (label) label.textContent = allSelected ? '해제' : '전체';
+  }
+
+  const hasSelection = hasDocument && selectedCount > 0;
+  if (els.deleteSelectedPagesBtn) {
+    els.deleteSelectedPagesBtn.disabled = !hasSelection || selectedCount >= state.pageCount;
+  }
+  if (els.duplicateSelectedPagesBtn) els.duplicateSelectedPagesBtn.disabled = !hasSelection;
+  if (els.movePageUpBtn) els.movePageUpBtn.disabled = !hasSelection;
+  if (els.movePageDownBtn) els.movePageDownBtn.disabled = !hasSelection;
+  highlightActiveThumbnail();
+}
+
+function clearThumbnailDropIndicators() {
+  els.thumbnailList.querySelectorAll('.thumb-item').forEach((item) => {
+    item.classList.remove('drop-before', 'drop-after', 'is-drop-target');
+  });
+}
+
+function handleThumbnailDragStart(event, pageNumber, item) {
+  const selectedPages = state.selectedPages.has(pageNumber)
+    ? new Set(state.selectedPages)
+    : new Set([pageNumber]);
+  if (!state.selectedPages.has(pageNumber)) {
+    state.selectedPages = selectedPages;
+    updatePageSelectionUi();
+  }
+
+  state.thumbnailDrag = {
+    sourcePages: Array.from(selectedPages).sort((left, right) => left - right),
+    targetPage: pageNumber,
+    position: 'before',
+  };
+  item.classList.add('is-dragging');
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(pageNumber));
+  }
+}
+
+function handleThumbnailDragOver(event, pageNumber, item) {
+  const drag = state.thumbnailDrag;
+  if (!drag || drag.sourcePages.includes(pageNumber)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+
+  const rect = item.getBoundingClientRect();
+  const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  clearThumbnailDropIndicators();
+  item.classList.add(position === 'before' ? 'drop-before' : 'drop-after', 'is-drop-target');
+  drag.targetPage = pageNumber;
+  drag.position = position;
+}
+
+function handleThumbnailDragLeave(item) {
+  item.classList.remove('drop-before', 'drop-after', 'is-drop-target');
+}
+
+function handleThumbnailDrop(event, pageNumber, item) {
+  const drag = state.thumbnailDrag;
+  if (!drag || drag.sourcePages.includes(pageNumber)) return;
+  event.preventDefault();
+  const position = drag.targetPage === pageNumber ? drag.position : 'before';
+  state.suppressThumbnailClick = true;
+  window.setTimeout(() => {
+    state.suppressThumbnailClick = false;
+  }, 0);
+  void moveDraggedPages(drag.sourcePages, pageNumber, position);
+  clearThumbnailDropIndicators();
+}
+
+function handleThumbnailDragEnd(item) {
+  item.classList.remove('is-dragging');
+  clearThumbnailDropIndicators();
+  state.thumbnailDrag = null;
+}
+
+async function moveDraggedPages(sourcePages, targetPage, position) {
+  const sourceSet = new Set(sourcePages);
+  const currentOrder = currentPageOrder();
+  const movingPages = currentOrder.filter((pageNumber) => sourceSet.has(pageNumber));
+  if (!movingPages.length || sourceSet.has(targetPage)) return;
+
+  const remainingPages = currentOrder.filter((pageNumber) => !sourceSet.has(pageNumber));
+  const targetIndex = remainingPages.indexOf(targetPage);
+  if (targetIndex < 0) return;
+  const insertIndex = targetIndex + (position === 'after' ? 1 : 0);
+  const nextOrder = remainingPages.slice();
+  nextOrder.splice(insertIndex, 0, ...movingPages);
+  if (nextOrder.every((pageNumber, index) => pageNumber === currentOrder[index])) return;
+
+  const activePageIdentity = currentOrder[state.page - 1];
+  const moved = await applyPageOrder(nextOrder, movingPages.length > 1 ? `${movingPages.length}개 페이지 이동` : '페이지 이동', {
+    pageIdentity: activePageIdentity,
+  });
+  if (!moved) return;
+
+  state.selectedPages = new Set(movingPages.map((pageNumber) => nextOrder.indexOf(pageNumber) + 1));
+  updatePageSelectionUi();
+}
+
+function toggleSelectAllPages() {
+  if (!state.pdf) return;
+  if (state.selectedPages.size === state.pageCount) {
+    state.selectedPages.clear();
+  } else {
+    state.selectedPages = new Set(Array.from({ length: state.pageCount }, (_, index) => index + 1));
+  }
+  updatePageSelectionUi();
+}
+
+function currentPageOrder() {
+  return Array.from({ length: state.pageCount }, (_, index) => index + 1);
+}
+
+function stablePdfFilename(filename) {
+  const value = String(filename || 'document.pdf').trim() || 'document.pdf';
+  const normalized = value.replace(/(?:-organized)+(?=\.pdf$)/gi, '');
+  return normalized || 'document.pdf';
+}
+
+async function applyPageOrder(order, label, options = {}) {
+  if (!state.pdf || !Array.isArray(order) || order.length === 0) return;
+  if (state.pdfOperationAbortController) {
+    showToast('현재 작업이 끝난 뒤 페이지 구성을 변경할 수 있습니다.', true);
+    return;
+  }
+
+  try {
+    const file = await currentPdfFile();
+    const form = new FormData();
+    form.append('file', file);
+    form.append('order', JSON.stringify(order.map((pageNumber) => pageNumber - 1)));
+    const completed = await runPdfOperation('/api/pdf/organize-pages', form, label, {
+      recordHistory: true,
+      markDirty: true,
+      downloadResult: false,
+      previewFilename: stablePdfFilename(state.currentFilename),
+    });
+    if (completed && Number.isInteger(options.pageIdentity)) {
+      const nextPage = order.indexOf(options.pageIdentity) + 1;
+      if (nextPage > 0) await goToPage(nextPage);
+    }
+    return completed;
+  } catch (error) {
+    setOperationStatus(label + ' 실패');
+    showToast(error.message || label + ' 작업을 시작하지 못했습니다.', true);
+    return false;
+  }
+}
+
+async function deleteSelectedPages() {
+  if (!state.pdf || state.selectedPages.size === 0) return;
+  if (state.selectedPages.size >= state.pageCount) {
+    showToast('PDF에는 한 페이지 이상 남아 있어야 합니다.', true);
+    return;
+  }
+
+  const selectedCount = state.selectedPages.size;
+  const proceed = window.confirm(`선택한 ${selectedCount}개 페이지를 삭제할까요?`);
+  if (!proceed) return;
+  const order = currentPageOrder().filter((pageNumber) => !state.selectedPages.has(pageNumber));
+  await applyPageOrder(order, `${selectedCount}페이지 삭제`);
+}
+
+async function duplicateSelectedPages() {
+  if (!state.pdf || state.selectedPages.size === 0) return;
+  const order = [];
+  currentPageOrder().forEach((pageNumber) => {
+    order.push(pageNumber);
+    if (state.selectedPages.has(pageNumber)) order.push(pageNumber);
+  });
+  await applyPageOrder(order, `${state.selectedPages.size}페이지 복제`);
+}
+
+async function moveSelectedPages(direction) {
+  if (!state.pdf || state.selectedPages.size === 0) return;
+  const order = currentPageOrder();
+
+  if (direction === 'up') {
+    for (let index = 1; index < order.length; index += 1) {
+      if (state.selectedPages.has(index + 1) && !state.selectedPages.has(index)) {
+        [order[index - 1], order[index]] = [order[index], order[index - 1]];
+      }
+    }
+  } else {
+    for (let index = order.length - 2; index >= 0; index -= 1) {
+      if (state.selectedPages.has(index + 1) && !state.selectedPages.has(index + 2)) {
+        [order[index], order[index + 1]] = [order[index + 1], order[index]];
+      }
+    }
+  }
+
+  if (order.every((pageNumber, index) => pageNumber === index + 1)) {
+    showToast(direction === 'up' ? '선택한 페이지가 이미 맨 위입니다.' : '선택한 페이지가 이미 맨 아래입니다.');
+    return;
+  }
+  await applyPageOrder(order, direction === 'up' ? '페이지 위로 이동' : '페이지 아래로 이동');
+}
+
+function updateHistoryButtons() {
+  const disabled = state.historyBusy || Boolean(state.pdfOperationAbortController);
+  if (els.undoBtn) els.undoBtn.disabled = disabled || state.undoStack.length === 0;
+  if (els.redoBtn) els.redoBtn.disabled = disabled || state.redoStack.length === 0;
+}
+
+function setDocumentDirty(dirty) {
+  state.documentDirty = Boolean(dirty);
+  const label = state.documentDirty ? '변경 있음' : '저장됨';
+  if (els.documentDirtyState) {
+    els.documentDirtyState.textContent = label;
+    els.documentDirtyState.classList.toggle('is-dirty', state.documentDirty);
+    els.documentDirtyState.classList.toggle('is-clean', !state.documentDirty);
+  }
+  if (els.viewerDocumentState) {
+    els.viewerDocumentState.textContent = label;
+    els.viewerDocumentState.classList.toggle('is-dirty', state.documentDirty);
+    els.viewerDocumentState.classList.toggle('is-clean', !state.documentDirty);
+  }
+}
+
+function resetPdfHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
+  state.historyBusy = false;
+  setDocumentDirty(false);
+  updateHistoryButtons();
+}
+
+async function captureCurrentPdfSnapshot() {
+  const file = await currentPdfFile();
+  return {
+    blob: new Blob([await file.arrayBuffer()], { type: 'application/pdf' }),
+    filename: stablePdfFilename(file.name || state.currentFilename || 'document.pdf'),
+  };
+}
+
+function pushUndoSnapshot(snapshot) {
+  if (!snapshot?.blob) return;
+  state.undoStack.push(snapshot);
+  if (state.undoStack.length > 12) state.undoStack.shift();
+  state.redoStack = [];
+  updateHistoryButtons();
+}
+
+async function undoPdfEdit() {
+  if (state.historyBusy || state.undoStack.length === 0) return;
+  state.historyBusy = true;
+  updateHistoryButtons();
+  let target = null;
+  let current = null;
+  try {
+    current = await captureCurrentPdfSnapshot();
+    target = state.undoStack.pop();
+    state.redoStack.push(current);
+    await loadPdfFromBlob(target.blob, target.filename);
+    setDocumentDirty(true);
+    setOperationStatus('실행 취소 완료');
+    showToast('이전 페이지 구성을 복원했습니다.');
+  } catch (error) {
+    if (target) state.undoStack.push(target);
+    if (current) state.redoStack.pop();
+    showToast(error.message || '실행 취소에 실패했습니다.', true);
+  } finally {
+    state.historyBusy = false;
+    updateHistoryButtons();
+  }
+}
+
+async function redoPdfEdit() {
+  if (state.historyBusy || state.redoStack.length === 0) return;
+  state.historyBusy = true;
+  updateHistoryButtons();
+  let target = null;
+  let current = null;
+  try {
+    current = await captureCurrentPdfSnapshot();
+    target = state.redoStack.pop();
+    state.undoStack.push(current);
+    await loadPdfFromBlob(target.blob, target.filename);
+    setDocumentDirty(true);
+    setOperationStatus('다시 실행 완료');
+    showToast('페이지 구성을 다시 적용했습니다.');
+  } catch (error) {
+    if (target) state.redoStack.push(target);
+    if (current) state.undoStack.pop();
+    showToast(error.message || '다시 실행에 실패했습니다.', true);
+  } finally {
+    state.historyBusy = false;
+    updateHistoryButtons();
+  }
 }
 
 async function runExtraction() {
@@ -1204,6 +2051,7 @@ async function currentPdfFile() {
     throw new Error('작업할 PDF가 없습니다.');
   }
   const response = await fetch(state.document.url);
+  if (!response.ok) throw new Error('현재 PDF를 준비하지 못했습니다.');
   const blob = await response.blob();
   return new File([blob], state.currentFilename || 'document.pdf', { type: 'application/pdf' });
 }
@@ -1651,8 +2499,9 @@ async function decryptPdf() {
   await runPdfOperation('/api/pdf/decrypt', form, '암호 해제');
 }
 
-async function runPdfOperation(url, form, label, options = {}) {
+async function runPdfOperationLegacy(url, form, label, options = {}) {
   const previewPdf = options.previewPdf !== false;
+  const downloadResult = options.downloadResult !== false;
   setOperationStatus(`${label} 실행 중`);
   try {
     const response = await fetch(url, { method: 'POST', body: form });
@@ -1669,15 +2518,443 @@ async function runPdfOperation(url, form, label, options = {}) {
 
     const blob = await response.blob();
     const filename = filenameFromResponse(response) || `${label}.pdf`;
-    downloadBlob(blob, filename);
+    if (downloadResult) downloadBlob(blob, filename);
     if (previewPdf && blob.type.includes('pdf')) {
-      await loadPdfFromBlob(blob, filename);
+      await loadPdfFromBlob(blob, options.previewFilename || filename);
     }
     setOperationStatus(`${label} 완료`);
     showToast(`${label} 완료`);
   } catch (error) {
     setOperationStatus(`${label} 실패`);
     showToast(error.message, true);
+  }
+}
+
+function operationStageIconName(stage) {
+  if (stage === 'success') return 'circle-check';
+  if (stage === 'error') return 'triangle-alert';
+  if (stage === 'warning') return 'circle-x';
+  return 'loader-circle';
+}
+
+function clearOperationStageTimer() {
+  if (state.operationStageTimer) {
+    window.clearTimeout(state.operationStageTimer);
+    state.operationStageTimer = null;
+  }
+}
+
+function showOperationStage(stage, title, detail, progress = 0, action = '') {
+  if (!els.operationStateCard) return;
+  clearOperationStageTimer();
+  state.operationStageState = stage;
+  els.operationStateCard.classList.remove('hidden');
+  els.operationStateCard.dataset.state = stage;
+  els.operationStateCard.setAttribute('aria-busy', String(stage === 'progress'));
+  els.operationStateTitle.textContent = title || '작업 상태';
+  els.operationStateDetail.textContent = detail || '';
+  if (els.operationStateProgress) {
+    const value = Number(progress);
+    els.operationStateProgress.value = Number.isFinite(value)
+      ? Math.max(0, Math.min(100, value))
+      : 0;
+    els.operationStateProgress.setAttribute('aria-valuetext', `${Math.round(els.operationStateProgress.value)}%`);
+  }
+  if (els.operationStateAction) {
+    const hasAction = Boolean(action);
+    els.operationStateAction.classList.toggle('hidden', !hasAction);
+    els.operationStateAction.textContent = action === 'retry' ? '다시 시도' : '작업 취소';
+    els.operationStateAction.setAttribute('aria-label', action === 'retry' ? '작업 다시 시도' : '작업 취소');
+    els.operationStateAction.dataset.action = action || '';
+    els.operationStateAction.disabled = false;
+  }
+  const icon = els.operationStateIcon?.querySelector('[data-lucide]');
+  if (icon) icon.setAttribute('data-lucide', operationStageIconName(stage));
+  refreshIcons();
+}
+
+function hideOperationStage() {
+  clearOperationStageTimer();
+  state.operationStageState = 'idle';
+  if (!els.operationStateCard) return;
+  els.operationStateCard.classList.add('hidden');
+  els.operationStateCard.dataset.state = 'neutral';
+  els.operationStateCard.setAttribute('aria-busy', 'false');
+  if (els.operationStateAction) {
+    els.operationStateAction.classList.add('hidden');
+    els.operationStateAction.dataset.action = '';
+    els.operationStateAction.setAttribute('aria-label', '작업 취소');
+  }
+}
+
+function scheduleOperationStageHide(delay = 2800) {
+  clearOperationStageTimer();
+  state.operationStageTimer = window.setTimeout(() => {
+    state.operationStageTimer = null;
+    hideOperationStage();
+  }, delay);
+}
+
+function showPdfOperationFailure(label, error) {
+  const canceled = error?.name === 'AbortError' || error?.canceled;
+  const canRetry = Boolean(state.lastFailedPdfOperation);
+  const progress = error?.progress ?? els.operationStateProgress?.value ?? els.operationProgress?.value ?? 0;
+  const detail = canceled
+    ? (canRetry ? '작업을 다시 시도할 수 있습니다.' : '작업을 취소했습니다.')
+    : (canRetry ? '작업을 다시 시도할 수 있습니다.' : (error?.message || '작업 중 오류가 발생했습니다.'));
+  showOperationStage(
+    canceled ? 'warning' : 'error',
+    `${label} ${canceled ? '취소됨' : '실패'}`,
+    detail,
+    progress,
+    canRetry ? 'retry' : '',
+  );
+  if (!canRetry) scheduleOperationStageHide(canceled ? 2600 : 4200);
+}
+
+function setPdfOperationControl(mode) {
+  if (els.cancelOperationBtn) {
+    const visible = mode === 'cancel' || mode === 'retry';
+    els.cancelOperationBtn.classList.toggle('hidden', !visible);
+    els.cancelOperationBtn.disabled = !visible;
+    els.cancelOperationBtn.textContent = mode === 'retry' ? '다시 시도' : '작업 취소';
+  }
+  if (els.operationProgress) {
+    els.operationProgress.classList.toggle('hidden', mode === 'hidden');
+    if (mode === 'hidden') els.operationProgress.value = 0;
+  }
+  if (mode === 'cancel') {
+    showOperationStage(
+      'progress',
+      state.pdfOperationLabel || 'PDF 작업',
+      '서버 작업 큐에서 처리 중입니다.',
+      els.operationProgress?.value || 0,
+      'cancel',
+    );
+  } else if (mode === 'retry') {
+    if (state.operationStageState !== 'error' && state.operationStageState !== 'warning') {
+      showOperationStage(
+        'error',
+        state.pdfOperationLabel || 'PDF 작업',
+        '작업을 다시 시도할 수 있습니다.',
+        els.operationProgress?.value || 0,
+        'retry',
+      );
+    } else if (els.operationStateAction) {
+      els.operationStateAction.classList.remove('hidden');
+      els.operationStateAction.textContent = '다시 시도';
+      els.operationStateAction.setAttribute('aria-label', '작업 다시 시도');
+      els.operationStateAction.dataset.action = 'retry';
+    }
+  } else if (mode === 'hidden' && state.operationStageState === 'progress') {
+    hideOperationStage();
+  }
+}
+
+function setPdfOperationActive(active) {
+  setPdfOperationControl(active ? 'cancel' : 'hidden');
+}
+
+function setPdfOperationProgress(progress) {
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return;
+  const normalized = Math.max(0, Math.min(100, value));
+  if (els.operationProgress) els.operationProgress.value = normalized;
+  if (els.operationStateProgress) {
+    els.operationStateProgress.value = normalized;
+    els.operationStateProgress.setAttribute('aria-valuetext', `${Math.round(normalized)}%`);
+  }
+}
+
+async function cancelPdfOperation() {
+  const jobId = state.pdfOperationJobId;
+  const controller = state.pdfOperationAbortController;
+  if (!jobId && !controller && state.lastFailedPdfOperation) {
+    await retryPdfOperation();
+    return;
+  }
+
+  if (jobId) {
+    try {
+      const job = await requestJson('/api/jobs/' + encodeURIComponent(jobId) + '/cancel', {
+        method: 'POST',
+      });
+      if (job?.status === 'completed') return;
+      setOperationStatus('작업 취소 요청 중');
+    } catch (error) {
+      showToast(error.message || '작업 취소 요청에 실패했습니다.', true);
+      return;
+    }
+  }
+  if (controller) controller.abort();
+}
+
+async function runPdfOperationHttp(url, form, label, options = {}) {
+  const previewPdf = options.previewPdf !== false;
+  const downloadResult = options.downloadResult !== false;
+  const controller = new AbortController();
+  state.pdfOperationAbortController = controller;
+  state.pdfOperationLabel = label;
+  setPdfOperationActive(true);
+  setOperationStatus(label + ' 실행 중');
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let message = response.statusText;
+      try {
+        const error = await response.json();
+        message = error.error || message;
+        if (error.requestId) message += ' (요청 ID: ' + error.requestId + ')';
+      } catch {
+        message = await response.text();
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const filename = filenameFromResponse(response) || label + '.pdf';
+    if (downloadResult) downloadBlob(blob, filename);
+    if (previewPdf && blob.type.includes('pdf')) {
+      await loadPdfFromBlob(blob, options.previewFilename || filename);
+    }
+    setOperationStatus(label + ' 완료');
+    showOperationStage('success', `${label} 완료`, '문서 캔버스에 결과를 반영했습니다.', 100);
+    scheduleOperationStageHide();
+    showToast(label + ' 완료');
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      setOperationStatus(label + ' 취소됨');
+      showOperationStage('warning', `${label} 취소됨`, '작업을 취소했습니다.', els.operationProgress?.value || 0);
+      scheduleOperationStageHide(2600);
+      showToast(label + ' 작업을 취소했습니다.');
+    } else {
+      setOperationStatus(label + ' 실패');
+      showOperationStage('error', `${label} 실패`, error.message || '작업 중 오류가 발생했습니다.', els.operationProgress?.value || 0);
+      scheduleOperationStageHide(4200);
+      showToast(error.message || label + ' 작업에 실패했습니다.', true);
+    }
+  } finally {
+    if (state.pdfOperationAbortController === controller) {
+      state.pdfOperationAbortController = null;
+      setPdfOperationActive(false);
+    }
+  }
+}
+
+async function readPdfOperationError(response) {
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  const error = new Error(data?.error || text || response.statusText || '작업 결과를 가져오지 못했습니다.');
+  error.status = response.status;
+  error.requestId = data?.requestId || '';
+  return error;
+}
+
+function waitForPdfOperationPoll(signal) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      const error = new Error('작업 상태 확인이 취소되었습니다.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, 500);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function monitorPdfJob(jobId, label, previewPdf, signal, options = {}) {
+  const downloadResult = options.downloadResult !== false;
+  const previewFilename = options.previewFilename || '';
+  while (true) {
+    const job = await requestJson('/api/jobs/' + encodeURIComponent(jobId), { signal });
+    setPdfOperationProgress(job.progress || 0);
+    setOperationStatus(label + ' ' + Math.round(Number(job.progress || 0)) + '% · ' + (job.message || '처리 중'));
+
+    if (job.status === 'completed') {
+      const resultUrl = job.resultUrl || '/api/jobs/' + encodeURIComponent(jobId) + '/result';
+      const response = await fetch(resultUrl, { signal });
+      if (!response.ok) throw await readPdfOperationError(response);
+      const blob = await response.blob();
+      const filename = filenameFromResponse(response) || label + '.pdf';
+      if (downloadResult) downloadBlob(blob, filename);
+      if (previewPdf && blob.type.includes('pdf')) {
+        await loadPdfFromBlob(blob, previewFilename || filename);
+      }
+      setOperationStatus(label + ' 완료');
+      showOperationStage('success', `${label} 완료`, '문서 캔버스에 결과를 반영했습니다.', 100);
+      scheduleOperationStageHide();
+      showToast(label + ' 완료');
+      return job;
+    }
+
+    if (job.status === 'failed' || job.status === 'canceled') {
+      const error = new Error(job.error?.message || job.message || label + ' 작업에 실패했습니다.');
+      error.jobId = jobId;
+      error.code = job.status === 'canceled' ? 'JOB_CANCELED' : 'JOB_FAILED';
+      error.retryable = Boolean(job.canRetry);
+      error.progress = Number(job.progress || 0);
+      error.canceled = job.status === 'canceled';
+      throw error;
+    }
+
+    await waitForPdfOperationPoll(signal);
+  }
+}
+
+async function runPdfOperation(url, form, label, options = {}) {
+  const previewPdf = options.previewPdf !== false;
+  const operationOptions = {
+    downloadResult: options.downloadResult !== false,
+    previewFilename: options.previewFilename || '',
+  };
+  const controller = new AbortController();
+  state.pdfOperationAbortController = controller;
+  state.pdfOperationLabel = label;
+  state.pdfOperationJobId = '';
+  state.lastFailedPdfOperation = null;
+  updateHistoryButtons();
+  setPdfOperationControl('cancel');
+  setPdfOperationProgress(0);
+  setOperationStatus(label + ' 대기 중');
+
+  let jobId = '';
+  let historySnapshot = null;
+  try {
+    if (options.recordHistory) historySnapshot = await captureCurrentPdfSnapshot();
+    const job = await requestJson(url, {
+      method: 'POST',
+      body: form,
+      headers: { 'X-JamePDF-Async': '1' },
+      signal: controller.signal,
+    });
+    jobId = String(job?.jobId || '');
+    if (!jobId) throw new Error('작업 ID를 받지 못했습니다.');
+    state.pdfOperationJobId = jobId;
+    setPdfOperationProgress(job.progress || 0);
+    await monitorPdfJob(jobId, label, previewPdf, controller.signal, operationOptions);
+    if (historySnapshot) pushUndoSnapshot(historySnapshot);
+    if (options.markDirty) setDocumentDirty(true);
+    return true;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      if (jobId) {
+        state.lastFailedPdfOperation = { jobId, label, previewPdf, ...operationOptions };
+      }
+      setOperationStatus(label + ' 취소됨');
+      showToast(label + ' 작업이 취소되었습니다.');
+    } else if (error.canceled) {
+      if (error.jobId && error.retryable) {
+        state.lastFailedPdfOperation = {
+          jobId: error.jobId,
+          label,
+          previewPdf,
+          ...operationOptions,
+        };
+      }
+      setOperationStatus(label + ' 취소됨');
+      showToast(label + ' 작업이 취소되었습니다.');
+    } else {
+      if (error.jobId && error.retryable) {
+        state.lastFailedPdfOperation = {
+          jobId: error.jobId,
+          label,
+          previewPdf,
+          ...operationOptions,
+          progress: error.progress || 0,
+        };
+        setPdfOperationProgress(error.progress || 0);
+      }
+      setOperationStatus(label + ' 실패');
+      showToast(error.message || label + ' 작업에 실패했습니다.', true);
+    }
+    showPdfOperationFailure(label, error);
+    return false;
+  } finally {
+    if (state.pdfOperationAbortController === controller) {
+      state.pdfOperationAbortController = null;
+      state.pdfOperationJobId = '';
+      setPdfOperationControl(state.lastFailedPdfOperation ? 'retry' : 'hidden');
+      updateHistoryButtons();
+    }
+  }
+}
+
+async function retryPdfOperation() {
+  const previous = state.lastFailedPdfOperation;
+  if (!previous?.jobId) return;
+
+  const controller = new AbortController();
+  state.pdfOperationAbortController = controller;
+  state.pdfOperationJobId = previous.jobId;
+  state.pdfOperationLabel = previous.label;
+  state.lastFailedPdfOperation = null;
+  updateHistoryButtons();
+  setPdfOperationControl('cancel');
+  setOperationStatus(previous.label + ' 재시도 대기 중');
+
+  let jobId = previous.jobId;
+  try {
+    const job = await requestJson('/api/jobs/' + encodeURIComponent(previous.jobId) + '/retry', {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    jobId = String(job?.jobId || previous.jobId);
+    state.pdfOperationJobId = jobId;
+    setPdfOperationProgress(job.progress || 0);
+    await monitorPdfJob(jobId, previous.label, previous.previewPdf, controller.signal, {
+      downloadResult: previous.downloadResult !== false,
+      previewFilename: previous.previewFilename || '',
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      state.lastFailedPdfOperation = { ...previous, jobId };
+      setOperationStatus(previous.label + ' 취소됨');
+      showToast(previous.label + ' 작업이 취소되었습니다.');
+    } else if (error.canceled) {
+      if (error.jobId && error.retryable) {
+        state.lastFailedPdfOperation = { ...previous, jobId: error.jobId };
+      }
+      setOperationStatus(previous.label + ' 취소됨');
+      showToast(previous.label + ' 작업이 취소되었습니다.');
+    } else {
+      if (error.jobId && error.retryable) {
+        state.lastFailedPdfOperation = {
+          ...previous,
+          jobId: error.jobId,
+          progress: error.progress || 0,
+        };
+      } else if (!error.jobId) {
+        state.lastFailedPdfOperation = previous;
+      }
+      setOperationStatus(previous.label + ' 실패');
+      showToast(error.message || previous.label + ' 재시도에 실패했습니다.', true);
+    }
+    showPdfOperationFailure(previous.label, error);
+  } finally {
+    if (state.pdfOperationAbortController === controller) {
+      state.pdfOperationAbortController = null;
+      state.pdfOperationJobId = '';
+      setPdfOperationControl(state.lastFailedPdfOperation ? 'retry' : 'hidden');
+    }
   }
 }
 
@@ -1788,6 +3065,7 @@ async function saveCurrentPdf(mode = 'current') {
       const saved = await saveBlobAs(file, filename, { rememberDocumentHandle: true });
       if (saved) {
         state.currentBlob = file;
+        setDocumentDirty(false);
         setOperationStatus('다른 이름으로 저장 완료');
         showToast('파일을 저장했습니다.');
         closeSaveDialog();
@@ -1807,6 +3085,7 @@ async function saveCurrentPdf(mode = 'current') {
         state.currentFilename = result.filename || filename;
         els.documentName.textContent = state.currentFilename;
         state.currentBlob = file;
+        setDocumentDirty(false);
         setOperationStatus('현재 위치에 저장 완료');
         showToast('현재 위치에 저장했습니다.');
         closeSaveDialog();
@@ -1825,6 +3104,7 @@ async function saveCurrentPdf(mode = 'current') {
     if (state.saveHandle) {
       await writeBlobToHandle(state.saveHandle, file);
       state.currentBlob = file;
+      setDocumentDirty(false);
       setOperationStatus('현재 위치에 저장 완료');
       showToast('현재 위치에 저장했습니다.');
       closeSaveDialog();
@@ -1838,6 +3118,7 @@ async function saveCurrentPdf(mode = 'current') {
     const saved = await saveBlobAs(file, filename, { rememberDocumentHandle: true });
     if (saved) {
       state.currentBlob = file;
+      setDocumentDirty(false);
       setOperationStatus('현재 위치에 저장 완료');
       showToast('파일을 저장했습니다.');
       closeSaveDialog();
@@ -1854,6 +3135,49 @@ async function saveCurrentPdf(mode = 'current') {
   }
 }
 
+function updateCommandbarContext(tabName) {
+  const meta = COMMAND_CONTEXT_META[tabName] || COMMAND_CONTEXT_META.file;
+  document.querySelectorAll('[data-command-context]').forEach((group) => {
+    group.classList.toggle('is-active', group.dataset.commandContext === tabName);
+  });
+  if (els.commandbarContextTitle) els.commandbarContextTitle.textContent = meta.title;
+  if (els.commandbarContextNote) els.commandbarContextNote.textContent = meta.note;
+  if (els.commandbarContext) els.commandbarContext.dataset.context = tabName;
+}
+
+function initRibbonDensity() {
+  let compact = false;
+  try {
+    compact = window.localStorage.getItem(RIBBON_DENSITY_PREF_KEY) === 'true';
+  } catch {
+    compact = false;
+  }
+  setRibbonCompact(compact, { persist: false });
+}
+
+function setRibbonCompact(compact, options = {}) {
+  state.ribbonCompact = Boolean(compact);
+  const app = document.querySelector('.app');
+  if (app) app.classList.toggle('ribbon-compact', state.ribbonCompact);
+
+  if (els.ribbonDensityBtn) {
+    const label = state.ribbonCompact ? '\ud45c\uc900' : '\uac04\uacb0';
+    const title = state.ribbonCompact ? '\ub9ac\ubcf8 \uba54\ub274\ub97c \uae30\ubcf8 \ud06c\uae30\ub85c \ud45c\uc2dc' : '\ub9ac\ubcf8 \uba54\ub274\ub97c \uac04\uacb0\ud558\uac8c \ud45c\uc2dc';
+    els.ribbonDensityBtn.setAttribute('aria-pressed', String(state.ribbonCompact));
+    els.ribbonDensityBtn.setAttribute('title', title);
+    const labelElement = els.ribbonDensityBtn.querySelector('span');
+    if (labelElement) labelElement.textContent = label;
+  }
+
+  if (options.persist !== false) {
+    try {
+      window.localStorage.setItem(RIBBON_DENSITY_PREF_KEY, String(state.ribbonCompact));
+    } catch {
+      // Ignore storage failures; density still applies for this session.
+    }
+  }
+}
+
 function showRibbonTab(tabName, options = {}) {
   if (!tabName) return;
 
@@ -1867,6 +3191,7 @@ function showRibbonTab(tabName, options = {}) {
   if (options.syncPanel && RIBBON_TAB_TO_PANEL[tabName]) {
     showSidePanel(RIBBON_TAB_TO_PANEL[tabName], { syncRibbon: false });
   }
+  updateCommandbarContext(tabName);
   refreshIcons();
 }
 
@@ -1900,7 +3225,9 @@ function closeSaveDialog() {
 
 function showSidePanel(panelId, options = {}) {
   document.querySelectorAll('.panel-tabs button').forEach((button) => {
-    button.classList.toggle('is-active', button.dataset.sideTab === panelId);
+    const isActive = button.dataset.sideTab === panelId;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
   });
   document.querySelectorAll('.side-panel').forEach((panel) => {
     panel.classList.toggle('is-active', panel.id === panelId);
@@ -1922,6 +3249,103 @@ function initRightbarToggle() {
   setRightbarCollapsed(collapsed, { persist: false });
 }
 
+function rightbarWidthLimit() {
+  const workspace = document.querySelector('.workspace');
+  const workspaceWidth = workspace?.clientWidth || window.innerWidth;
+  const maxAvailable = workspaceWidth - 154 - 700 - 16;
+  return Math.max(RIGHTBAR_MIN_WIDTH, Math.min(RIGHTBAR_MAX_WIDTH, maxAvailable));
+}
+
+function setRightbarWidth(width, options = {}) {
+  const workspace = document.querySelector('.workspace');
+  if (!workspace) return;
+  const maxWidth = rightbarWidthLimit();
+  const requested = Number(width);
+  const nextWidth = Math.round(Math.max(
+    RIGHTBAR_MIN_WIDTH,
+    Math.min(maxWidth, Number.isFinite(requested) ? requested : RIGHTBAR_DEFAULT_WIDTH),
+  ));
+  state.rightbarWidth = nextWidth;
+  workspace.style.setProperty('--rightbar-width', `${nextWidth}px`);
+
+  if (els.rightbarResizeHandle) {
+    els.rightbarResizeHandle.setAttribute('aria-valuenow', String(nextWidth));
+    els.rightbarResizeHandle.setAttribute('aria-valuetext', `${nextWidth}px`);
+  }
+  if (options.persist !== false) {
+    try {
+      window.localStorage.setItem(RIGHTBAR_WIDTH_PREF_KEY, String(nextWidth));
+    } catch {
+      // Ignore storage failures; resizing should still work for this session.
+    }
+  }
+}
+
+function initRightbarResize() {
+  if (!els.rightbarResizeHandle) return;
+  let storedWidth = RIGHTBAR_DEFAULT_WIDTH;
+  try {
+    const storedValue = window.localStorage.getItem(RIGHTBAR_WIDTH_PREF_KEY);
+    const parsed = storedValue === null ? Number.NaN : Number(storedValue);
+    if (Number.isFinite(parsed)) storedWidth = parsed;
+  } catch {
+    storedWidth = RIGHTBAR_DEFAULT_WIDTH;
+  }
+  setRightbarWidth(storedWidth, { persist: false });
+
+  els.rightbarResizeHandle.addEventListener('pointerdown', startRightbarResize);
+  els.rightbarResizeHandle.addEventListener('keydown', (event) => {
+    const step = event.shiftKey ? 48 : 16;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      setRightbarWidth(state.rightbarWidth + step);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      setRightbarWidth(state.rightbarWidth - step);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      setRightbarWidth(RIGHTBAR_MIN_WIDTH);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      setRightbarWidth(RIGHTBAR_MAX_WIDTH);
+    }
+  });
+  window.addEventListener('resize', () => {
+    setRightbarWidth(state.rightbarWidth, { persist: false });
+  });
+}
+
+function startRightbarResize(event) {
+  if (state.rightbarCollapsed || !els.rightbarResizeHandle) return;
+  event.preventDefault();
+  const handle = els.rightbarResizeHandle;
+  const pointerId = event.pointerId;
+  let finished = false;
+
+  const onMove = (moveEvent) => {
+    if (moveEvent.pointerId !== pointerId) return;
+    setRightbarWidth(window.innerWidth - moveEvent.clientX, { persist: false });
+  };
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    handle.classList.remove('is-dragging');
+    document.body.classList.remove('is-resizing-rightbar');
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', finish);
+    handle.removeEventListener('pointercancel', finish);
+    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    setRightbarWidth(state.rightbarWidth);
+  };
+
+  handle.classList.add('is-dragging');
+  document.body.classList.add('is-resizing-rightbar');
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
+  handle.setPointerCapture?.(pointerId);
+}
+
 function setRightbarCollapsed(collapsed, options = {}) {
   state.rightbarCollapsed = Boolean(collapsed);
   const workspace = document.querySelector('.workspace');
@@ -1938,6 +3362,10 @@ function setRightbarCollapsed(collapsed, options = {}) {
     els.rightbarToggleBtn.setAttribute('title', label);
     const icon = els.rightbarToggleBtn.querySelector('i');
     if (icon) icon.setAttribute('data-lucide', iconName);
+  }
+  if (els.rightbarResizeHandle) {
+    els.rightbarResizeHandle.setAttribute('aria-hidden', String(state.rightbarCollapsed));
+    els.rightbarResizeHandle.tabIndex = state.rightbarCollapsed ? -1 : 0;
   }
 
   if (options.persist !== false) {
@@ -1964,12 +3392,33 @@ function showResultTab(tabName) {
 }
 
 function updateStatus() {
-  els.pageStatus.textContent = `${state.page || 0} / ${state.pageCount || 0}`;
-  els.zoomStatus.textContent = `${Math.round(state.scale * 100)}%`;
+  const pageLabel = `${state.page || 0} / ${state.pageCount || 0}`;
+  const zoomLabel = `${Math.round(state.scale * 100)}%`;
+  els.pageStatus.textContent = pageLabel;
+  els.zoomStatus.textContent = zoomLabel;
+  if (els.viewerDocumentName) {
+    els.viewerDocumentName.textContent = state.currentFilename || '문서 없음';
+  }
+  if (els.viewerPageBadge) {
+    els.viewerPageBadge.textContent = `페이지 ${pageLabel}`;
+  }
+  if (els.viewerZoomBadge) {
+    els.viewerZoomBadge.textContent = zoomLabel;
+  }
 }
 
 function setOperationStatus(text) {
-  els.operationStatus.textContent = text;
+  const value = String(text || '');
+  els.operationStatus.textContent = value;
+  let tone = 'neutral';
+  if (/(실패|오류|error|failed)/i.test(value)) tone = 'error';
+  else if (/(취소|cancel)/i.test(value)) tone = 'warning';
+  else if (/(완료|저장됨|열림|success|ready)/i.test(value)) tone = 'success';
+  else if (/(대기|중|처리|확인|준비|loading|progress)/i.test(value)) tone = 'progress';
+  els.operationStatus.dataset.state = tone;
+  if (state.operationStageState === 'progress' && els.operationStateDetail) {
+    els.operationStateDetail.textContent = value;
+  }
 }
 
 function aiDocumentContext() {
@@ -2249,7 +3698,11 @@ async function requestJson(url, options) {
     data = { error: text };
   }
   if (!response.ok) {
-    throw new Error(data?.error || response.statusText);
+    const error = new Error(data?.error || response.statusText);
+    error.status = response.status;
+    error.requestId = data?.requestId || '';
+    error.data = data;
+    throw error;
   }
   return data;
 }

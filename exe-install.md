@@ -1,16 +1,16 @@
-﻿# James PDF V4.2.0.0 EXE 설치 파일 제작 지침
+﻿# James PDF V4.2.1 EXE 설치 파일 제작 지침
 
-이 문서는 **James PDF V4.2.0.0**을 Windows 배포용 `EXE` 설치 파일로 만드는 절차를 정리한 문서입니다.  
+이 문서는 **James PDF V4.2.1**을 Windows 배포용 `EXE` 설치 파일로 만드는 절차를 정리한 문서입니다.  
 기준 방식은 **JamesPDF_V3.0.0_Final**에서 사용한 런처 + Inno Setup 패키징 구조를 따릅니다.
 
 ## 기준 정보
 
 - 앱 이름: **James PDF**
-- 버전: **V4.2.0.0**
+- 버전: **V4.2.1**
 - 설치 파일 이름: `JamesPDF_Setup.exe`
 - 실행 런처 이름: `JamePDF.exe`
 - 기본 포트: `5200`
-- 개발 작업본: `C:\JamePDF-work\JamesPDF_V4.2.0.0`
+- 개발 작업본: `C:\JamePDF-work\JamesPDF_V4.2.1`
 - 참고 기준본: `Z:\내 드라이브\AI\안티그래비티\james-PDF\JamesPDF_V3.0.0_Final`
 - 참고 installer 자료: `Z:\내 드라이브\AI\안티그래비티\james-PDF\installer`
 
@@ -71,7 +71,7 @@ Get-Command ISCC.exe -ErrorAction SilentlyContinue
 V4 설치 패키지에는 다음 항목이 포함되어야 합니다.
 
 ```text
-JamesPDF_V4.2.0.0\
+JamesPDF_V4.2.1\
   app\
     public\
     server.js
@@ -125,7 +125,7 @@ V4에서도 이 이미지를 그대로 사용하시면 됩니다.
 복사 예시:
 
 ```powershell
-$root = "C:\JamePDF-work\JamesPDF_V4.2.0.0"
+$root = "C:\JamePDF-work\JamesPDF_V4.2.1"
 $v3Images = "Z:\내 드라이브\AI\안티그래비티\james-PDF\installer\images"
 
 New-Item -ItemType Directory -Force "$root\installer\images"
@@ -147,14 +147,14 @@ V4용으로 복사한 뒤 다음 값을 수정합니다.
 
 | 항목 | V3 값 | V4 값 |
 |---|---|---|
-| AssemblyDescription | `JamesPDF V3.0.0 launcher` | `James PDF V4.2.0.0 launcher` |
+| AssemblyDescription | `JamesPDF V3.0.0 launcher` | `James PDF V4.2.1 launcher` |
 | AssemblyCompany | `Eun Jun-Ug` | `Cybereun` |
 | AssemblyProduct | `JamesPDF` | `James PDF` |
 | AssemblyFileVersion | `3.0.0.0` | `4.2.0.0` |
 | AssemblyVersion | `3.0.0.0` | `4.2.0.0` |
-| AppTitle | `JamesPDF V3.0.0` | `James PDF V4.2.0.0` |
+| AppTitle | `JamesPDF V3.0.0` | `James PDF V4.2.1` |
 | Health version check | `"version":"3.0.0"` | `"version":"4.2.0.0"` |
-| Error messages | `JamesPDF V3.0.0` | `James PDF V4.2.0.0` |
+| Error messages | `JamesPDF V3.0.0` | `James PDF V4.2.1` |
 
 V4 런처의 핵심 동작은 V3와 동일하게 유지합니다.
 
@@ -170,7 +170,7 @@ V4 런처의 핵심 동작은 V3와 동일하게 유지합니다.
 ```powershell
 $ErrorActionPreference = "Stop"
 
-$root = "C:\JamePDF-work\JamesPDF_V4.2.0.0"
+$root = "C:\JamePDF-work\JamesPDF_V4.2.1"
 $launcherSource = "$root\installer\launcher\JamePDFLauncher.cs"
 $launcherExe = "$root\JamePDF.exe"
 $iconPath = "$root\installer\images\app_icon.ico"
@@ -195,7 +195,7 @@ if (!(Test-Path $csc)) {
 컴파일 후 확인:
 
 ```powershell
-Test-Path "C:\JamePDF-work\JamesPDF_V4.2.0.0\JamePDF.exe"
+Test-Path "C:\JamePDF-work\JamesPDF_V4.2.1\JamePDF.exe"
 ```
 
 ## V4 Inno Setup 스크립트 지침
@@ -241,7 +241,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription=James PDF V4.2.0.0 standalone PDF studio
+VersionInfoDescription=James PDF V4.2.1 standalone PDF studio
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 ```
@@ -289,16 +289,16 @@ Source: "images\app_icon.ico"; DestDir: "{app}\installer\images"; Flags: ignorev
 
 ```ini
 [Icons]
-Name: "{group}\James PDF V4.2.0.0"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\installer\images\app_icon.ico"
+Name: "{group}\James PDF V4.2.1"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\installer\images\app_icon.ico"
 Name: "{group}\{cm:UninstallProgram,James PDF}"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\James PDF V4.2.0.0"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\installer\images\app_icon.ico"; Tasks: desktopicon
+Name: "{userdesktop}\James PDF V4.2.1"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\installer\images\app_icon.ico"; Tasks: desktopicon
 ```
 
 권장 `[Run]`:
 
 ```ini
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch James PDF V4.2.0.0"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch James PDF V4.2.1"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 ```
 
 ## V4 build-v4.ps1 예시
@@ -361,7 +361,7 @@ Write-Host "Built $rootSetup"
 ### 1. V4 작업본 준비
 
 ```powershell
-$root = "C:\JamePDF-work\JamesPDF_V4.2.0.0"
+$root = "C:\JamePDF-work\JamesPDF_V4.2.1"
 Test-Path "$root\app\server.js"
 Test-Path "$root\node.exe"
 Test-Path "$root\app\public\index.html"
@@ -408,9 +408,9 @@ installer\build-v4.ps1
 
 ```text
 3.0.0 또는 3.0.0.0 -> 4.2.0.0
-JamesPDF V3.0.0 -> James PDF V4.2.0.0
+JamesPDF V3.0.0 -> James PDF V4.2.1
 Eun Jun-Ug -> Cybereun
-JamePDF_v3.0.0 -> JamesPDF_V4.2.0.0 또는 현재 루트 기준 경로
+JamePDF_v3.0.0 -> JamesPDF_V4.2.1 또는 현재 루트 기준 경로
 ```
 
 ### 5. 설치 파일 빌드
@@ -423,8 +423,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 성공하면 다음 파일이 생성됩니다.
 
 ```text
-C:\JamePDF-work\JamesPDF_V4.2.0.0\installer\Output\JamesPDF_Setup.exe
-C:\JamePDF-work\JamesPDF_V4.2.0.0\JamesPDF_Setup.exe
+C:\JamePDF-work\JamesPDF_V4.2.1\installer\Output\JamesPDF_Setup.exe
+C:\JamePDF-work\JamesPDF_V4.2.1\JamesPDF_Setup.exe
 ```
 
 ## 설치 파일 검증
@@ -432,7 +432,7 @@ C:\JamePDF-work\JamesPDF_V4.2.0.0\JamesPDF_Setup.exe
 ### 1. 런처 단독 검증
 
 ```powershell
-& "C:\JamePDF-work\JamesPDF_V4.2.0.0\JamePDF.exe" --check-only
+& "C:\JamePDF-work\JamesPDF_V4.2.1\JamePDF.exe" --check-only
 ```
 
 정상 기준:
@@ -443,7 +443,7 @@ C:\JamePDF-work\JamesPDF_V4.2.0.0\JamesPDF_Setup.exe
 ### 2. 서버 실행 검증
 
 ```powershell
-& "C:\JamePDF-work\JamesPDF_V4.2.0.0\JamePDF.exe" --no-browser
+& "C:\JamePDF-work\JamesPDF_V4.2.1\JamePDF.exe" --no-browser
 Invoke-WebRequest "http://localhost:5200/api/health" -UseBasicParsing
 ```
 
@@ -456,8 +456,8 @@ Invoke-WebRequest "http://localhost:5200/api/health" -UseBasicParsing
 
 1. `JamesPDF_Setup.exe`를 실행합니다.
 2. 설치 위치는 기본값 `{localappdata}\JamesPDF`를 사용합니다.
-3. 설치 완료 후 `James PDF V4.2.0.0` 바로가기로 실행합니다.
-4. 앱 화면 상단에 `James PDF`와 `V4.2.0.0 PDF Studio`가 표시되는지 확인합니다.
+3. 설치 완료 후 `James PDF V4.2.1` 바로가기로 실행합니다.
+4. 앱 화면 상단에 `James PDF`와 `V4.2.1 PDF Studio`가 표시되는지 확인합니다.
 5. PDF 열기, AI 탭 열기, `/api/health` 응답을 확인합니다.
 6. 제거 프로그램이 정상 등록되는지 확인합니다.
 

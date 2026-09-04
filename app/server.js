@@ -2,9 +2,9 @@
 const userHome = process.env.USERPROFILE || process.env.HOME || '';
 const LOCAL_DEP_NODE_MODULES = path.join(userHome, '.jamepdf-v4-deps', 'node_modules');
 const LEGACY_LOCAL_DEP_NODE_MODULES = path.join(userHome, '.jamepdf-v3-deps', 'node_modules');
-const SHARED_NODE_MODULES = path.join(__dirname, '..', 'james-app', 'node_modules');
+const APP_NODE_MODULES = path.join(__dirname, 'node_modules');
 
-[LOCAL_DEP_NODE_MODULES, LEGACY_LOCAL_DEP_NODE_MODULES, SHARED_NODE_MODULES].forEach((dir) => {
+[LOCAL_DEP_NODE_MODULES, LEGACY_LOCAL_DEP_NODE_MODULES].forEach((dir) => {
   if (dir && !module.paths.includes(dir)) {
     module.paths.push(dir);
   }
@@ -30,11 +30,20 @@ const PORT = Number(process.env.PORT || 5200);
 const APP_VERSION = APP_PACKAGE.version;
 const APP_NAME = `JamePDF V${APP_VERSION}`;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_OPERATION_BATCH_BYTES = 500 * 1024 * 1024;
+const MAX_OPERATION_QUEUE_LENGTH = 20;
+const OPERATION_CONCURRENCY = Math.max(
+  1,
+  Math.min(2, Number(process.env.JAMEPDF_OPERATION_CONCURRENCY || 1) || 1),
+);
+const OPERATION_JOB_RETENTION_MS = 30 * 60 * 1000;
 
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const DATA_DIR = path.join(__dirname, 'data');
 const OUTPUTS_DIR = path.join(__dirname, 'outputs');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const OPERATION_UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'jamepdf-v4-operation-'));
+const OPERATION_JOB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'jamepdf-v4-jobs-'));
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const KORDOC_DATA_DIR = path.join(DATA_DIR, 'kordoc');
 const USER_DOWNLOADS_DIR = path.join(userHome || os.homedir() || '', 'Downloads');
@@ -52,9 +61,18 @@ let hybridProcess = null;
 const SAVE_TARGETS = new Map();
 let kordocStudioModulePromise = null;
 let updateInstallInProgress = false;
+const operationJobs = new Map();
+const operationQueue = [];
+let activeOperationWorkers = 0;
 const updateService = createUpdateService({
   currentVersion: APP_VERSION,
   appRoot: path.resolve(__dirname, '..'),
+});
+
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader('X-JamePDF-Request-Id', req.requestId);
+  next();
 });
 
 function commandPath(command) {
@@ -130,13 +148,108 @@ app.get('/kordoc', (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'kordoc.html'));
 });
 
+function isPathInside(parent, target) {
+  const relative = path.relative(parent, target);
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function operationFilesFromRequest(req) {
+  const files = [];
+  if (req.file) files.push(req.file);
+  if (Array.isArray(req.files)) files.push(...req.files);
+  if (req.files && !Array.isArray(req.files)) {
+    Object.values(req.files).forEach((items) => {
+      if (Array.isArray(items)) files.push(...items);
+    });
+  }
+  return files;
+}
+
+function cleanupOperationFiles(req) {
+  operationFilesFromRequest(req).forEach((file) => {
+    const filePath = file?.path;
+    if (!filePath || !isPathInside(OPERATION_UPLOAD_DIR, filePath)) return;
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // The request may already have cleaned this file.
+    }
+  });
+}
+
+app.use((req, res, next) => {
+  const cleanup = () => {
+    if (!req.deferOperationCleanup) cleanupOperationFiles(req);
+  };
+  res.once('finish', cleanup);
+  res.once('close', () => {
+    if (res.writableFinished) cleanup();
+  });
+  next();
+});
+
+function rejectUpload(cb, message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  cb(error);
+}
+
+function pdfFileFilter(req, file, cb) {
+  const extension = path.extname(String(file.originalname || '')).toLowerCase();
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  if (extension === '.pdf' || mimeType === 'application/pdf') {
+    cb(null, true);
+    return;
+  }
+  rejectUpload(cb, 'PDF 파일만 업로드할 수 있습니다.');
+}
+
+function pdfOrImageFileFilter(req, file, cb) {
+  const extension = path.extname(String(file.originalname || '')).toLowerCase();
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  const isPdf = extension === '.pdf' || mimeType === 'application/pdf';
+  const isImage = ['.jpg', '.jpeg', '.png'].includes(extension)
+    || mimeType === 'image/jpeg'
+    || mimeType === 'image/png';
+  if (isPdf || isImage) {
+    cb(null, true);
+    return;
+  }
+  rejectUpload(cb, 'PDF, JPG, JPEG, PNG 파일만 업로드할 수 있습니다.');
+}
+
 const diskUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${path.extname(file.originalname || '.pdf').toLowerCase() || '.pdf'}`),
+    filename: (req, file, cb) => cb(null, crypto.randomUUID() + '.pdf'),
   }),
   limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: pdfFileFilter,
 });
+
+const operationUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, OPERATION_UPLOAD_DIR),
+    filename: (req, file, cb) => cb(null, crypto.randomUUID() + (path.extname(file.originalname || '').toLowerCase() || '.bin')),
+  }),
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 100 },
+  fileFilter: pdfOrImageFileFilter,
+});
+
+function validateOperationBatch(req, res, next) {
+  const files = operationFilesFromRequest(req);
+  const totalBytes = files.reduce((sum, file) => sum + uploadFileSize(file), 0);
+  if (totalBytes > MAX_OPERATION_BATCH_BYTES) {
+    cleanupOperationFiles(req);
+    res.status(413).json({
+      error: '한 번에 처리할 파일의 총 용량은 500MB를 넘을 수 없습니다.',
+      maxBytes: MAX_OPERATION_BATCH_BYTES,
+      receivedBytes: totalBytes,
+    });
+    return;
+  }
+  next();
+}
 
 const memoryUpload = multer({
   storage: multer.memoryStorage(),
@@ -200,8 +313,44 @@ function readJson(file, fallback) {
 }
 
 function writeJson(file, data) {
+  writeFileAtomic(file, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function writeFileAtomic(file, data, options = 'utf8') {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  const temporary = path.join(
+    path.dirname(file),
+    '.' + path.basename(file) + '.' + crypto.randomUUID() + '.tmp',
+  );
+  const backup = path.join(
+    path.dirname(file),
+    '.' + path.basename(file) + '.' + crypto.randomUUID() + '.bak',
+  );
+  let movedOriginal = false;
+
+  try {
+    fs.writeFileSync(temporary, data, options);
+    if (fs.existsSync(file)) {
+      fs.renameSync(file, backup);
+      movedOriginal = true;
+    }
+    fs.renameSync(temporary, file);
+    if (movedOriginal && fs.existsSync(backup)) fs.unlinkSync(backup);
+  } catch (error) {
+    try {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    } catch {
+      // Keep the original error; the temporary file is in the data directory.
+    }
+    if (movedOriginal && !fs.existsSync(file) && fs.existsSync(backup)) {
+      try {
+        fs.renameSync(backup, file);
+      } catch {
+        // Keep the original error; recovery can be attempted from the backup.
+      }
+    }
+    throw error;
+  }
 }
 
 function getHistory() {
@@ -232,9 +381,9 @@ function uploadedPdfPath(id) {
 }
 
 function converterJarPath() {
-  const local = path.join(__dirname, 'node_modules', '@opendataloader', 'pdf', 'lib', 'opendataloader-pdf-cli.jar');
+  const local = path.join(APP_NODE_MODULES, '@opendataloader', 'pdf', 'lib', 'opendataloader-pdf-cli.jar');
   if (fs.existsSync(local)) return local;
-  return path.join(SHARED_NODE_MODULES, '@opendataloader', 'pdf', 'lib', 'opendataloader-pdf-cli.jar');
+  return local;
 }
 
 function findOutputFile(outputDir, ext) {
@@ -643,6 +792,20 @@ function parsePagesSpec(spec, pageCount) {
   return Array.from(selected).sort((a, b) => a - b);
 }
 
+function parsePageOrder(spec, pageCount) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(spec || ''));
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20000) return null;
+  const order = parsed.map((value) => Number(value));
+  if (order.some((value) => !Number.isInteger(value) || value < 0 || value >= pageCount)) return null;
+  return order;
+}
+
 function parseRangeList(spec, pageCount) {
   const text = String(spec || '').trim();
   if (!text) {
@@ -1005,6 +1168,22 @@ function cleanupTemp(dir) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+function cleanupOperationUploadDirectory() {
+  if (OPERATION_UPLOAD_DIR && fs.existsSync(OPERATION_UPLOAD_DIR)) {
+    fs.rmSync(OPERATION_UPLOAD_DIR, { recursive: true, force: true });
+  }
+}
+
+process.once('exit', cleanupOperationUploadDirectory);
+
+function cleanupOperationJobDirectory() {
+  if (OPERATION_JOB_DIR && fs.existsSync(OPERATION_JOB_DIR)) {
+    fs.rmSync(OPERATION_JOB_DIR, { recursive: true, force: true });
+  }
+}
+
+process.once('exit', cleanupOperationJobDirectory);
 
 function findGhostscriptInDirectory(rootDir) {
   if (!rootDir || !fs.existsSync(rootDir)) return '';
@@ -1671,10 +1850,10 @@ async function extractPdfDocument(id, body = {}) {
   const json = jsonPath ? normalizeDocumentTextV2(JSON.parse(fs.readFileSync(jsonPath, 'utf8'))) : null;
   const markdown = mdPath ? normalizeExtractedTextV2(fs.readFileSync(mdPath, 'utf8')) : '';
   if (jsonPath && json) {
-    fs.writeFileSync(jsonPath, JSON.stringify(json, null, 2), 'utf8');
+    writeFileAtomic(jsonPath, JSON.stringify(json, null, 2), 'utf8');
   }
   if (mdPath) {
-    fs.writeFileSync(mdPath, markdown, 'utf8');
+    writeFileAtomic(mdPath, markdown, 'utf8');
   }
   const summary = json ? summarizeJson(json) : {};
 
@@ -1708,12 +1887,33 @@ async function extractPdfDocument(id, body = {}) {
 
 function requiredFile(req, name = 'file') {
   const file = req.file || (req.files && req.files[name] && req.files[name][0]);
-  if (!file) {
+  if (!file || (!Buffer.isBuffer(file.buffer) && !file.path)) {
     const error = new Error('파일이 필요합니다.');
     error.statusCode = 400;
     throw error;
   }
   return file;
+}
+
+function uploadFileBuffer(file) {
+  if (Buffer.isBuffer(file?.buffer)) return file.buffer;
+  if (file?.path && fs.existsSync(file.path)) return fs.readFileSync(file.path);
+  const error = new Error('업로드된 파일을 읽을 수 없습니다.');
+  error.statusCode = 400;
+  throw error;
+}
+
+function uploadFileSize(file) {
+  if (Number.isFinite(Number(file?.size))) return Number(file.size);
+  if (Buffer.isBuffer(file?.buffer)) return file.buffer.length;
+  if (file?.path) {
+    try {
+      return fs.statSync(file.path).size;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
 }
 
 function asyncRoute(handler) {
@@ -1722,9 +1922,461 @@ function asyncRoute(handler) {
       await handler(req, res, next);
     } catch (error) {
       next(error);
+    } finally {
+      if (!req.deferOperationCleanup) cleanupOperationFiles(req);
     }
   };
 }
+
+class OperationCanceledError extends Error {
+  constructor() {
+    super('작업이 취소되었습니다.');
+    this.code = 'OPERATION_CANCELED';
+    this.statusCode = 499;
+    this.retryable = true;
+  }
+}
+
+function updateOperationProgress(req, progress, message) {
+  const job = req?.operationJob;
+  if (!job) return;
+  if (job.cancelRequested) throw new OperationCanceledError();
+
+  const numericProgress = Number(progress);
+  if (Number.isFinite(numericProgress)) {
+    job.progress = Math.round(Math.max(0, Math.min(100, numericProgress)));
+  }
+  if (message) job.message = String(message);
+  job.updatedAt = new Date().toISOString();
+}
+
+function cloneOperationFile(file) {
+  return file ? { ...file } : file;
+}
+
+function cloneOperationRequest(req, job) {
+  return {
+    body: req.body || {},
+    file: cloneOperationFile(req.file),
+    files: Array.isArray(req.files)
+      ? req.files.map((file) => cloneOperationFile(file))
+      : req.files,
+    headers: req.headers || {},
+    query: req.query || {},
+    requestId: req.requestId,
+    deferOperationCleanup: true,
+    operationJob: job,
+  };
+}
+
+function operationPayloadBuffer(payload) {
+  if (Buffer.isBuffer(payload)) return payload;
+  if (payload instanceof Uint8Array) return Buffer.from(payload);
+  if (payload instanceof ArrayBuffer) return Buffer.from(new Uint8Array(payload));
+  if (typeof payload === 'string') return Buffer.from(payload, 'utf8');
+  if (payload === undefined || payload === null) return Buffer.alloc(0);
+  return Buffer.from(JSON.stringify(payload), 'utf8');
+}
+
+function createOperationJobResponse(job) {
+  const response = {
+    statusCode: 200,
+    headers: {},
+    body: null,
+    finished: false,
+    setHeader(name, value) {
+      this.headers[String(name)] = String(value);
+      return this;
+    },
+    status(code) {
+      this.statusCode = Number(code) || 200;
+      return this;
+    },
+    send(payload) {
+      this.body = payload;
+      this.finished = true;
+      if (this.statusCode >= 200 && this.statusCode < 300) {
+        writeFileAtomic(job.resultPath, operationPayloadBuffer(payload));
+        job.responseHeaders = { ...this.headers };
+      }
+      return this;
+    },
+    json(payload) {
+      this.setHeader('Content-Type', 'application/json; charset=utf-8');
+      this.body = payload;
+      return this.send(JSON.stringify(payload));
+    },
+  };
+  return response;
+}
+
+function operationJobInputsAvailable(job) {
+  const files = operationFilesFromRequest(job.request);
+  return files.length > 0 && files.every((file) => {
+    return Boolean(file?.path && fs.existsSync(file.path));
+  });
+}
+
+function cleanupOperationJob(job, removeResult = false) {
+  if (!job) return;
+  cleanupOperationFiles(job.request);
+  if (removeResult && job.resultPath) {
+    try {
+      fs.unlinkSync(job.resultPath);
+    } catch {
+      // The result may already have been removed.
+    }
+  }
+  if (removeResult && job.dir && isPathInside(OPERATION_JOB_DIR, job.dir)) {
+    try {
+      fs.rmSync(job.dir, { recursive: true, force: true });
+    } catch {
+      // Retention cleanup is best effort.
+    }
+  }
+}
+
+function operationJobError(error, job) {
+  const statusCode = Number(error?.statusCode || 500);
+  const retryable = error?.retryable !== undefined
+    ? Boolean(error.retryable)
+    : statusCode >= 500 && statusCode !== 501;
+  return {
+    message: error?.message || '작업을 처리하지 못했습니다.',
+    code: error?.code || 'OPERATION_FAILED',
+    statusCode,
+    retryable,
+    requestId: job.requestId,
+  };
+}
+
+function publicOperationJob(job) {
+  const result = {
+    jobId: job.id,
+    label: job.label,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    attempt: job.attempt,
+    maxAttempts: job.maxAttempts,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    cancelRequested: Boolean(job.cancelRequested),
+    canRetry: Boolean(
+      (job.status === 'failed' || job.status === 'canceled')
+      && job.attempt < job.maxAttempts
+      && job.retryable !== false
+      && operationJobInputsAvailable(job),
+    ),
+  };
+  if (job.status === 'queued') {
+    result.queuePosition = Math.max(0, operationQueue.indexOf(job) + 1);
+  }
+  if (job.status === 'completed') {
+    result.resultUrl = '/api/jobs/' + encodeURIComponent(job.id) + '/result';
+  }
+  if (job.error) result.error = job.error;
+  return result;
+}
+
+function createOperationJob(req, label, handler) {
+  const id = crypto.randomUUID();
+  const dir = path.join(OPERATION_JOB_DIR, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const now = new Date().toISOString();
+  const job = {
+    id,
+    dir,
+    resultPath: path.join(dir, 'result.bin'),
+    label: String(label || 'PDF 작업'),
+    status: 'queued',
+    progress: 0,
+    message: '작업 대기 중',
+    attempt: 1,
+    maxAttempts: 3,
+    retryable: true,
+    cancelRequested: false,
+    requestId: req.requestId,
+    createdAt: now,
+    updatedAt: now,
+    queuedAt: now,
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+    responseHeaders: {},
+    handler: asyncRoute(handler),
+  };
+  job.request = cloneOperationRequest(req, job);
+  return job;
+}
+
+function finishCanceledOperationJob(job) {
+  job.status = 'canceled';
+  job.progress = Math.min(job.progress, 99);
+  job.message = '작업이 취소되었습니다.';
+  job.retryable = true;
+  job.error = operationJobError(new OperationCanceledError(), job);
+  job.finishedAt = new Date().toISOString();
+  job.updatedAt = job.finishedAt;
+}
+
+async function executeOperationJob(job) {
+  const response = createOperationJobResponse(job);
+  let handlerError = null;
+  const next = (error) => {
+    if (error) handlerError = error;
+  };
+
+  job.status = 'running';
+  job.startedAt = new Date().toISOString();
+  job.finishedAt = null;
+  job.updatedAt = job.startedAt;
+
+  try {
+    updateOperationProgress(job.request, 5, '작업을 시작하는 중');
+    await job.handler(job.request, response, next);
+    if (handlerError) throw handlerError;
+    if (job.cancelRequested) throw new OperationCanceledError();
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      let body = response.body;
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          // Keep the plain response text as the error message.
+        }
+      }
+      const error = new Error(body?.error || body || '작업을 처리하지 못했습니다.');
+      error.statusCode = response.statusCode;
+      throw error;
+    }
+    if (!response.finished || !fs.existsSync(job.resultPath)) {
+      throw new Error('작업 결과를 생성하지 못했습니다.');
+    }
+
+    updateOperationProgress(job.request, 98, '결과를 준비하는 중');
+    job.status = 'completed';
+    job.progress = 100;
+    job.message = '작업 완료';
+    job.retryable = false;
+    job.error = null;
+    job.finishedAt = new Date().toISOString();
+  } catch (error) {
+    if (error?.code === 'OPERATION_CANCELED' || job.cancelRequested) {
+      finishCanceledOperationJob(job);
+    } else {
+      job.status = 'failed';
+      job.message = error?.message || '작업에 실패했습니다.';
+      job.error = operationJobError(error, job);
+      job.retryable = job.error.retryable;
+      job.finishedAt = new Date().toISOString();
+      job.updatedAt = job.finishedAt;
+    }
+    try {
+      if (fs.existsSync(job.resultPath)) fs.unlinkSync(job.resultPath);
+    } catch {
+      // Failed results are never exposed as completed output.
+    }
+  } finally {
+    if (job.status === 'completed') cleanupOperationFiles(job.request);
+    job.updatedAt = new Date().toISOString();
+  }
+}
+
+function processOperationQueue() {
+  while (activeOperationWorkers < OPERATION_CONCURRENCY && operationQueue.length > 0) {
+    const job = operationQueue.shift();
+    if (!job || job.status !== 'queued') continue;
+    if (job.cancelRequested) {
+      finishCanceledOperationJob(job);
+      continue;
+    }
+
+    activeOperationWorkers += 1;
+    executeOperationJob(job)
+      .catch((error) => {
+        job.status = 'failed';
+        job.message = error?.message || '작업에 실패했습니다.';
+        job.error = operationJobError(error, job);
+        job.retryable = job.error.retryable;
+        job.finishedAt = new Date().toISOString();
+        job.updatedAt = job.finishedAt;
+      })
+      .finally(() => {
+        activeOperationWorkers -= 1;
+        processOperationQueue();
+      });
+  }
+}
+
+function cleanupExpiredOperationJobs() {
+  const expiry = Date.now() - OPERATION_JOB_RETENTION_MS;
+  for (const [id, job] of operationJobs.entries()) {
+    if (!job.finishedAt || new Date(job.finishedAt).getTime() > expiry) continue;
+    if (!['completed', 'failed', 'canceled'].includes(job.status)) continue;
+    cleanupOperationJob(job, true);
+    operationJobs.delete(id);
+  }
+}
+
+const operationJobCleanupTimer = setInterval(cleanupExpiredOperationJobs, 5 * 60 * 1000);
+operationJobCleanupTimer.unref();
+
+function queuedOperationRoute(label, handler) {
+  const synchronousHandler = asyncRoute(handler);
+  return (req, res, next) => {
+    const requestedAsync = req.headers['x-jamepdf-async'] === '1'
+      || String(req.query?.async || '') === '1';
+    if (!requestedAsync) {
+      synchronousHandler(req, res, next);
+      return;
+    }
+
+    if (operationQueue.length >= MAX_OPERATION_QUEUE_LENGTH) {
+      cleanupOperationFiles(req);
+      res.status(429).json({
+        error: '현재 작업 대기열이 가득 찼습니다. 잠시 후 다시 시도해주세요.',
+        requestId: req.requestId,
+      });
+      return;
+    }
+
+    try {
+      req.deferOperationCleanup = true;
+      const job = createOperationJob(req, label, handler);
+      operationJobs.set(job.id, job);
+      operationQueue.push(job);
+      res.status(202).json({
+        ...publicOperationJob(job),
+        requestId: req.requestId,
+      });
+      processOperationQueue();
+    } catch (error) {
+      req.deferOperationCleanup = false;
+      cleanupOperationFiles(req);
+      next(error);
+    }
+  };
+}
+
+function operationJobOr404(req, res) {
+  const job = operationJobs.get(String(req.params.id || ''));
+  if (job) return job;
+  res.status(404).json({
+    error: '작업을 찾을 수 없습니다. 보관 기간이 지났을 수 있습니다.',
+    requestId: req.requestId,
+  });
+  return null;
+}
+
+app.get('/api/jobs/:id', (req, res) => {
+  const job = operationJobOr404(req, res);
+  if (!job) return;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(publicOperationJob(job));
+});
+
+app.post('/api/jobs/:id/cancel', (req, res) => {
+  const job = operationJobOr404(req, res);
+  if (!job) return;
+  if (job.status === 'queued') {
+    job.cancelRequested = true;
+    const queueIndex = operationQueue.indexOf(job);
+    if (queueIndex >= 0) operationQueue.splice(queueIndex, 1);
+    finishCanceledOperationJob(job);
+    res.json(publicOperationJob(job));
+    return;
+  }
+  if (job.status === 'running') {
+    job.cancelRequested = true;
+    job.message = '취소 요청을 처리하는 중';
+    job.updatedAt = new Date().toISOString();
+    res.json(publicOperationJob(job));
+    return;
+  }
+  res.status(409).json({
+    error: '이미 종료된 작업은 취소할 수 없습니다.',
+    requestId: req.requestId,
+    job: publicOperationJob(job),
+  });
+});
+
+app.post('/api/jobs/:id/retry', (req, res) => {
+  const job = operationJobOr404(req, res);
+  if (!job) return;
+  const publicJob = publicOperationJob(job);
+  if (!publicJob.canRetry) {
+    res.status(409).json({
+      error: job.attempt >= job.maxAttempts
+        ? '재시도 가능 횟수를 모두 사용했습니다.'
+        : '현재 작업은 재시도할 수 없습니다.',
+      requestId: req.requestId,
+      job: publicJob,
+    });
+    return;
+  }
+  if (operationQueue.length >= MAX_OPERATION_QUEUE_LENGTH) {
+    res.status(429).json({
+      error: '현재 작업 대기열이 가득 찼습니다. 잠시 후 다시 시도해주세요.',
+      requestId: req.requestId,
+      job: publicJob,
+    });
+    return;
+  }
+
+  try {
+    if (fs.existsSync(job.resultPath)) fs.unlinkSync(job.resultPath);
+  } catch {
+    // A stale result does not prevent another attempt from starting.
+  }
+  job.attempt += 1;
+  job.status = 'queued';
+  job.progress = 0;
+  job.message = '작업 대기 중 (재시도)';
+  job.cancelRequested = false;
+  job.retryable = true;
+  job.error = null;
+  job.responseHeaders = {};
+  job.startedAt = null;
+  job.finishedAt = null;
+  job.queuedAt = new Date().toISOString();
+  job.updatedAt = job.queuedAt;
+  operationQueue.push(job);
+  res.status(202).json(publicOperationJob(job));
+  processOperationQueue();
+});
+
+app.get('/api/jobs/:id/result', (req, res, next) => {
+  const job = operationJobOr404(req, res);
+  if (!job) return;
+  if (job.status !== 'completed') {
+    res.status(409).json({
+      error: '작업이 아직 완료되지 않았습니다.',
+      requestId: req.requestId,
+      job: publicOperationJob(job),
+    });
+    return;
+  }
+  if (!job.resultPath || !fs.existsSync(job.resultPath)) {
+    res.status(410).json({
+      error: '작업 결과가 만료되었거나 삭제되었습니다.',
+      requestId: req.requestId,
+    });
+    return;
+  }
+
+  Object.entries(job.responseHeaders || {}).forEach(([name, value]) => {
+    if (name.toLowerCase() !== 'content-length') res.setHeader(name, value);
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Length', fs.statSync(job.resultPath).size);
+  const stream = fs.createReadStream(job.resultPath);
+  stream.once('error', next);
+  stream.pipe(res);
+});
 
 function toArrayBuffer(buffer) {
   if (buffer instanceof ArrayBuffer) return buffer;
@@ -1903,8 +2555,8 @@ async function extractClassicPdfForKordoc(inputPath, resultDir, body = {}) {
   const markdown = mdPath ? normalizeReadableScienceMarkdown(fs.readFileSync(mdPath, 'utf8')) : '';
   if (!markdown.trim()) throw new Error('Classic PDF 분석 결과 Markdown이 비어 있습니다.');
 
-  if (jsonPath && json) fs.writeFileSync(jsonPath, JSON.stringify(json, null, 2), 'utf8');
-  if (mdPath) fs.writeFileSync(mdPath, markdown, 'utf8');
+  if (jsonPath && json) writeFileAtomic(jsonPath, JSON.stringify(json, null, 2), 'utf8');
+  if (mdPath) writeFileAtomic(mdPath, markdown, 'utf8');
 
   const summary = json ? summarizeJson(json) : {};
   const blocks = markdownToKordocBlocks(markdown);
@@ -2885,7 +3537,7 @@ app.get('/api/health', asyncRoute(async (req, res) => {
     },
     dependencies: {
       localDependencyPath: LOCAL_DEP_NODE_MODULES,
-      sharedNodeModules: SHARED_NODE_MODULES,
+      sharedNodeModules: APP_NODE_MODULES,
       pdfLib: true,
       converterJar: fs.existsSync(converterJarPath()),
       javaAvailable: commandExists('java'),
@@ -3186,7 +3838,30 @@ app.post('/api/hybrid/start', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/documents', (req, res) => {
-  res.json(getHistory());
+  const documents = getHistory().map((entry) => ({
+    ...entry,
+    available: Boolean(uploadedPdfPath(entry.id)),
+  }));
+  res.json(documents);
+});
+
+app.post('/api/documents/:id/open', (req, res) => {
+  const id = safeResultId(req.params.id);
+  const inputPath = uploadedPdfPath(id);
+  const current = getHistory().find((entry) => entry.id === id);
+  if (!id || !current || !inputPath) {
+    res.status(404).json({ error: '최근 문서 원본을 찾을 수 없습니다.' });
+    return;
+  }
+
+  const updated = {
+    ...current,
+    available: true,
+    lastOpenedAt: new Date().toISOString(),
+    url: '/api/file/' + id,
+  };
+  saveHistoryItem(updated);
+  res.json(updated);
 });
 
 app.delete('/api/documents/:id', asyncRoute(async (req, res) => {
@@ -3326,7 +4001,7 @@ app.post('/api/system/save-file', memoryUpload.single('file'), asyncRoute(async 
   }
 
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(targetPath, file.buffer);
+  writeFileAtomic(targetPath, file.buffer);
   res.json({
     saved: true,
     filename: path.basename(targetPath),
@@ -3334,7 +4009,7 @@ app.post('/api/system/save-file', memoryUpload.single('file'), asyncRoute(async 
   });
 }));
 
-app.post('/api/pdf/merge', memoryUpload.array('files', 50), asyncRoute(async (req, res) => {
+app.post('/api/pdf/merge', operationUpload.array('files', 50), validateOperationBatch, queuedOperationRoute('PDF 병합', async (req, res) => {
   const files = req.files || [];
   if (files.length < 2) {
     res.status(400).json({ error: '병합하려면 PDF가 2개 이상 필요합니다.' });
@@ -3342,17 +4017,24 @@ app.post('/api/pdf/merge', memoryUpload.array('files', 50), asyncRoute(async (re
   }
 
   const out = await PDFDocument.create();
-  for (const file of files) {
-    const source = await loadPdf(file.buffer);
+  updateOperationProgress(req, 12, 'PDF 병합을 준비하는 중');
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    updateOperationProgress(
+      req,
+      15 + ((index + 1) / files.length) * 65,
+      'PDF ' + (index + 1) + '/' + files.length + ' 처리 중',
+    );
+    const source = await loadPdf(uploadFileBuffer(file));
     const pages = await out.copyPages(source, source.getPageIndices());
     pages.forEach((page) => out.addPage(page));
   }
   sendPdf(res, 'merged.pdf', await savePdf(out));
 }));
 
-app.post('/api/pdf/extract-pages', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/extract-pages', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('페이지 추출', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   const pages = parsePagesSpec(req.body.pages, source.getPageCount());
   if (!pages.length) {
     res.status(400).json({ error: '추출할 페이지 범위가 올바르지 않습니다.' });
@@ -3362,9 +4044,32 @@ app.post('/api/pdf/extract-pages', memoryUpload.single('file'), asyncRoute(async
   sendPdf(res, `${safeDownloadBase(file.originalname)}-pages.pdf`, await savePdf(out));
 }));
 
-app.post('/api/pdf/split', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/organize-pages', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('페이지 구성', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
+  const order = parsePageOrder(req.body.order, source.getPageCount());
+  if (!order) {
+    res.status(400).json({ error: '페이지 순서 정보가 올바르지 않습니다.' });
+    return;
+  }
+
+  const out = await PDFDocument.create();
+  updateOperationProgress(req, 12, '페이지 구성을 준비하는 중');
+  const pages = await out.copyPages(source, order);
+  pages.forEach((page, index) => {
+    updateOperationProgress(
+      req,
+      15 + ((index + 1) / pages.length) * 70,
+      '페이지 ' + (index + 1) + '/' + pages.length + ' 구성 중',
+    );
+    out.addPage(page);
+  });
+  sendPdf(res, `${safeDownloadBase(file.originalname)}-organized.pdf`, await savePdf(out));
+}));
+
+app.post('/api/pdf/split', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('PDF 분할', async (req, res) => {
+  const file = requiredFile(req);
+  const source = await loadPdf(uploadFileBuffer(file));
   const ranges = parseRangeList(req.body.ranges, source.getPageCount());
   if (!ranges.length) {
     res.status(400).json({ error: '분할할 페이지 범위가 올바르지 않습니다.' });
@@ -3373,7 +4078,13 @@ app.post('/api/pdf/split', memoryUpload.single('file'), asyncRoute(async (req, r
 
   const base = safeDownloadBase(file.originalname);
   const parts = [];
+  updateOperationProgress(req, 12, 'PDF 분할을 준비하는 중');
   for (let index = 0; index < ranges.length; index += 1) {
+    updateOperationProgress(
+      req,
+      15 + ((index + 1) / ranges.length) * 65,
+      '분할 파일 ' + (index + 1) + '/' + ranges.length + ' 생성 중',
+    );
     const out = await copyPagesToNewPdf(source, ranges[index]);
     const label = ranges[index].map((page) => page + 1).join('-');
     parts.push({
@@ -3385,12 +4096,18 @@ app.post('/api/pdf/split', memoryUpload.single('file'), asyncRoute(async (req, r
   sendBuffer(res, `${base}-split.zip`, 'application/zip', buildZip(parts));
 }));
 
-app.post('/api/pdf/rotate', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/rotate', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('페이지 회전', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   const delta = Number(req.body.degrees || 90);
   const pages = parsePagesSpec(req.body.pages, source.getPageCount());
+  updateOperationProgress(req, 20, '페이지 회전 중');
   source.getPages().forEach((page, index) => {
+    updateOperationProgress(
+      req,
+      20 + ((index + 1) / source.getPageCount()) * 60,
+      '페이지 ' + (index + 1) + '/' + source.getPageCount() + ' 확인 중',
+    );
     if (pages.includes(index)) {
       const current = page.getRotation().angle || 0;
       page.setRotation(degrees(((current + delta) % 360 + 360) % 360));
@@ -3399,9 +4116,9 @@ app.post('/api/pdf/rotate', memoryUpload.single('file'), asyncRoute(async (req, 
   sendPdf(res, `${safeDownloadBase(file.originalname)}-rotated.pdf`, await savePdf(source));
 }));
 
-app.post('/api/pdf/print-layout', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/print-layout', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('인쇄 레이아웃', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   const printPdf = await buildPrintLayoutPdf(source, req.body || {});
   const pagesPerSheet = [1, 2, 4, 6, 9].includes(Number(req.body.pagesPerSheet)) ? Number(req.body.pagesPerSheet) : 1;
   const duplex = String(req.body.duplex || 'simplex');
@@ -3412,9 +4129,9 @@ app.post('/api/pdf/print-layout', memoryUpload.single('file'), asyncRoute(async 
   });
 }));
 
-app.post('/api/pdf/watermark', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/watermark', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('워터마크', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   const font = await embedReadableFont(source);
   const text = String(req.body.text || 'JamePDF').trim() || 'JamePDF';
   const size = Math.max(8, Math.min(160, Number(req.body.fontSize || 48)));
@@ -3424,6 +4141,11 @@ app.post('/api/pdf/watermark', memoryUpload.single('file'), asyncRoute(async (re
   const pages = parsePagesSpec(req.body.pages, source.getPageCount());
 
   source.getPages().forEach((page, index) => {
+    updateOperationProgress(
+      req,
+      20 + ((index + 1) / source.getPageCount()) * 60,
+      '워터마크 페이지 ' + (index + 1) + '/' + source.getPageCount() + ' 처리 중',
+    );
     if (!pages.includes(index)) return;
     const { width, height } = page.getSize();
     const textWidth = font.widthOfTextAtSize(text, size);
@@ -3441,9 +4163,9 @@ app.post('/api/pdf/watermark', memoryUpload.single('file'), asyncRoute(async (re
   sendPdf(res, `${safeDownloadBase(file.originalname)}-watermark.pdf`, await savePdf(source));
 }));
 
-app.post('/api/pdf/annotate', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/annotate', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('주석 삽입', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   const pageIndex = Math.max(0, Math.min(source.getPageCount() - 1, Number(req.body.page || 1) - 1));
   const page = source.getPages()[pageIndex];
   const { width, height } = page.getSize();
@@ -3470,9 +4192,9 @@ app.post('/api/pdf/annotate', memoryUpload.single('file'), asyncRoute(async (req
   sendPdf(res, `${safeDownloadBase(file.originalname)}-edited.pdf`, await savePdf(source));
 }));
 
-app.post('/api/pdf/edit', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/edit', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('PDF 편집', async (req, res) => {
   const file = requiredFile(req);
-  const source = await loadPdf(file.buffer);
+  const source = await loadPdf(uploadFileBuffer(file));
   
   let annotations = [];
   try {
@@ -3490,7 +4212,13 @@ app.post('/api/pdf/edit', memoryUpload.single('file'), asyncRoute(async (req, re
 
   const pages = source.getPages();
 
-  for (const ann of annotations) {
+  for (let index = 0; index < annotations.length; index += 1) {
+    const ann = annotations[index];
+    updateOperationProgress(
+      req,
+      annotations.length ? 20 + ((index + 1) / annotations.length) * 60 : 80,
+      '편집 요소 ' + (index + 1) + '/' + annotations.length + ' 처리 중',
+    );
     const pageIndex = Math.max(0, Math.min(pages.length - 1, Number(ann.page || 1) - 1));
     const page = pages[pageIndex];
     if (!page) continue;
@@ -3557,7 +4285,7 @@ app.post('/api/pdf/edit', memoryUpload.single('file'), asyncRoute(async (req, re
   sendPdf(res, `${safeDownloadBase(file.originalname)}-edited.pdf`, await savePdf(source));
 }));
 
-app.post('/api/pdf/images-to-pdf', memoryUpload.array('files', 100), asyncRoute(async (req, res) => {
+app.post('/api/pdf/images-to-pdf', operationUpload.array('files', 100), validateOperationBatch, queuedOperationRoute('이미지 PDF 변환', async (req, res) => {
   const files = req.files || [];
   if (!files.length) {
     res.status(400).json({ error: 'PDF로 변환할 이미지가 필요합니다.' });
@@ -3565,13 +4293,20 @@ app.post('/api/pdf/images-to-pdf', memoryUpload.array('files', 100), asyncRoute(
   }
 
   const out = await PDFDocument.create();
-  for (const file of files) {
+  updateOperationProgress(req, 12, '이미지 PDF 변환을 준비하는 중');
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    updateOperationProgress(
+      req,
+      15 + ((index + 1) / files.length) * 65,
+      '이미지 ' + (index + 1) + '/' + files.length + ' 처리 중',
+    );
     const name = String(file.originalname || '').toLowerCase();
     let image;
     if (name.endsWith('.jpg') || name.endsWith('.jpeg') || file.mimetype === 'image/jpeg') {
-      image = await out.embedJpg(file.buffer);
+      image = await out.embedJpg(uploadFileBuffer(file));
     } else if (name.endsWith('.png') || file.mimetype === 'image/png') {
-      image = await out.embedPng(file.buffer);
+      image = await out.embedPng(uploadFileBuffer(file));
     } else {
       continue;
     }
@@ -3588,7 +4323,7 @@ app.post('/api/pdf/images-to-pdf', memoryUpload.array('files', 100), asyncRoute(
   sendPdf(res, 'images.pdf', await savePdf(out));
 }));
 
-app.post('/api/pdf/compress', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/compress', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('PDF 압축', async (req, res) => {
   const file = requiredFile(req);
   const base = safeDownloadBase(file.originalname);
   const gs = ghostscriptCommand();
@@ -3603,9 +4338,9 @@ app.post('/api/pdf/compress', memoryUpload.single('file'), asyncRoute(async (req
   if (gs) {
     const dir = tempDir();
     try {
-      const input = path.join(dir, 'input.pdf');
+      const input = file.path || path.join(dir, 'input.pdf');
       const output = path.join(dir, 'output.pdf');
-      fs.writeFileSync(input, file.buffer);
+      if (!file.path) fs.writeFileSync(input, uploadFileBuffer(file));
       const result = spawnSync(gs, [
         '-sDEVICE=pdfwrite',
         '-dCompatibilityLevel=1.4',
@@ -3622,7 +4357,7 @@ app.post('/api/pdf/compress', memoryUpload.single('file'), asyncRoute(async (req
       const compressed = fs.readFileSync(output);
       sendPdf(res, `${base}-compressed.pdf`, compressed, {
         'X-JamePDF-Compression': 'ghostscript',
-        'X-JamePDF-Original-Bytes': file.buffer.length,
+        'X-JamePDF-Original-Bytes': uploadFileSize(file),
         'X-JamePDF-Output-Bytes': compressed.length,
       });
     } finally {
@@ -3631,17 +4366,17 @@ app.post('/api/pdf/compress', memoryUpload.single('file'), asyncRoute(async (req
     return;
   }
 
-  const pdf = await loadPdf(file.buffer);
+  const pdf = await loadPdf(uploadFileBuffer(file));
   const rewritten = await savePdf(pdf);
   sendPdf(res, `${base}-compressed.pdf`, rewritten, {
     'X-JamePDF-Compression': 'pdf-lib-rewrite',
     'X-JamePDF-Note': encodeURIComponent('Ghostscript가 없어 객체 스트림 재저장 압축만 적용했습니다.'),
-    'X-JamePDF-Original-Bytes': file.buffer.length,
+    'X-JamePDF-Original-Bytes': uploadFileSize(file),
     'X-JamePDF-Output-Bytes': rewritten.length,
   });
 }));
 
-app.post('/api/pdf/encrypt', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/encrypt', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('암호 설정', async (req, res) => {
   const file = requiredFile(req);
   const qpdf = qpdfCommand();
   if (!qpdf) {
@@ -3658,9 +4393,9 @@ app.post('/api/pdf/encrypt', memoryUpload.single('file'), asyncRoute(async (req,
 
   const dir = tempDir();
   try {
-    const input = path.join(dir, 'input.pdf');
+    const input = file.path || path.join(dir, 'input.pdf');
     const output = path.join(dir, 'encrypted.pdf');
-    fs.writeFileSync(input, file.buffer);
+    if (!file.path) fs.writeFileSync(input, uploadFileBuffer(file));
     const result = spawnSync(qpdf, ['--encrypt', userPassword, ownerPassword, '256', '--', input, output], {
       encoding: 'utf8',
       windowsHide: true,
@@ -3674,7 +4409,7 @@ app.post('/api/pdf/encrypt', memoryUpload.single('file'), asyncRoute(async (req,
   }
 }));
 
-app.post('/api/pdf/decrypt', memoryUpload.single('file'), asyncRoute(async (req, res) => {
+app.post('/api/pdf/decrypt', operationUpload.single('file'), validateOperationBatch, queuedOperationRoute('암호 해제', async (req, res) => {
   const file = requiredFile(req);
   const qpdf = qpdfCommand();
   if (!qpdf) {
@@ -3685,9 +4420,9 @@ app.post('/api/pdf/decrypt', memoryUpload.single('file'), asyncRoute(async (req,
   const password = String(req.body.password || '').trim();
   const dir = tempDir();
   try {
-    const input = path.join(dir, 'input.pdf');
+    const input = file.path || path.join(dir, 'input.pdf');
     const output = path.join(dir, 'decrypted.pdf');
-    fs.writeFileSync(input, file.buffer);
+    if (!file.path) fs.writeFileSync(input, uploadFileBuffer(file));
     const args = password
       ? [`--password=${password}`, '--decrypt', input, output]
       : ['--decrypt', input, output];
@@ -3762,13 +4497,23 @@ app.post('/api/ai/chat', asyncRoute(async (req, res) => {
 }));
 
 app.use((error, req, res, next) => {
+  const requestId = req.requestId || crypto.randomUUID();
   if (error instanceof multer.MulterError) {
-    res.status(400).json({ error: error.message });
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? '파일 크기가 허용된 최대 용량(200MB)을 초과했습니다.'
+      : error.message;
+    console.error('Request failed [' + requestId + ']', error);
+    res.status(status).json({ error: message, requestId });
     return;
   }
 
   const status = error.statusCode || 500;
-  res.status(status).json({ error: error.message || '요청을 처리하지 못했습니다.' });
+  console.error('Request failed [' + requestId + ']', error);
+  res.status(status).json({
+    error: error.message || '요청을 처리하지 못했습니다.',
+    requestId,
+  });
 });
 
 app.listen(PORT, () => {

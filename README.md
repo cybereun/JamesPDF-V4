@@ -1,25 +1,25 @@
 ﻿# James PDF
 
-![Version](https://img.shields.io/badge/version-V4.2.1-2563eb?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-V4.2.2-2563eb?style=for-the-badge)
 ![Developer](https://img.shields.io/badge/developer-Cybereun-111827?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/platform-Windows%20Desktop-0f766e?style=for-the-badge)
 ![PDF Studio](https://img.shields.io/badge/PDF-Studio-f97316?style=for-the-badge)
 ![AI Agent](https://img.shields.io/badge/AI-Agent%20Panel-7c3aed?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-16a34a?style=for-the-badge)
 
-**Version:** V4.2.1  
+**Version:** V4.2.2  
 **Developer:** Cybereun  
 **Application Name:** James PDF  
-**Studio Label:** V4.2.1 PDF Studio  
+**Studio Label:** V4.2.2 PDF Studio  
 **License:** MIT
 
-James PDF V4.2.1은 PDF 보기, 추출, 편집, 변환, 보안, 인쇄, 검색, OCR 기반 분석, AI Agent 패널을 하나의 데스크톱 스타일 화면에서 사용할 수 있도록 구성한 Windows 중심 PDF Studio 프로그램입니다.
+James PDF V4.2.2는 PDF 보기, 추출, 편집, 변환, 보안, 인쇄, 검색, OCR 기반 분석, AI Agent 패널을 하나의 데스크톱 스타일 화면에서 사용할 수 있도록 구성한 Windows 중심 PDF Studio 프로그램입니다.
 
 ## 제작 과정 기록
 
-### 1. V4.2.0.0 작업본 복원
+### 1. V4.2.2 릴리즈 작업본 정리
 
-- V4.2.0.0 원본 경로를 분석하였습니다.
+- V4 기준 원본 경로를 분석하였습니다.
 - 안정적인 개발을 위해 C 드라이브에 격리 작업본을 구성하였습니다.
 - `JamesPDF_V3.0.0_Final`을 기준으로 누락된 `app/public` UI 파일을 복원하였습니다.
 - V3 최종본의 정적 UI를 V4 서버 구조와 다시 연결하였습니다.
@@ -30,7 +30,7 @@ James PDF V4.2.1은 PDF 보기, 추출, 편집, 변환, 보안, 인쇄, 검색, 
 
 - 화면 제목과 버전 표기를 V4 기준으로 정리하였습니다.
 - 앱 이름을 **James PDF**로 수정하였습니다.
-- 상단 스튜디오 라벨인 **V4.2.0.0 PDF Studio**는 그대로 유지하였습니다.
+- 상단 스튜디오 라벨인 **V4.2.2 PDF Studio**는 일관되게 유지하였습니다.
 
 ### 3. 오른쪽 AI Agent 패널 재구성
 
@@ -80,7 +80,7 @@ James PDF V4.2.1은 PDF 보기, 추출, 편집, 변환, 보안, 인쇄, 검색, 
 ### 9. 최종본 동기화
 
 - 주요 변경은 C 드라이브 작업본에 먼저 적용하였습니다.
-- 검증 후 V4.2.0.0 최종본에도 `app/public` 변경분과 문서 변경분을 반영하였습니다.
+- 검증 후 V4.2.2 릴리즈본에 `app/public` 변경분과 문서 변경분을 반영하였습니다.
 
 ## 주요 특징
 
@@ -163,7 +163,7 @@ James PDF V4.2.1은 PDF 보기, 추출, 편집, 변환, 보안, 인쇄, 검색, 
 개발 작업본:
 
 ```text
-C:\JamePDF-work\JamesPDF_V4.2.0.0
+C:\JamePDF-work\JamesPDF_V4.2.1
 ```
 
 실행 URL:

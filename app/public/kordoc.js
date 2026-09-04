@@ -1,6 +1,8 @@
 const studioState = {
   parseResult: null,
   selectedFile: null,
+  sharedDocumentId: '',
+  sharedDocumentPage: '',
   compareResult: null,
   compareFilter: 'all',
   formTemplateFile: null,
@@ -14,6 +16,8 @@ const el = {};
 document.addEventListener('DOMContentLoaded', () => {
   [
     'studioState',
+    'studioCommandTitle',
+    'studioCommandNote',
     'backToClassicBtn',
     'documentInput',
     'documentFileLabel',
@@ -61,20 +65,26 @@ document.addEventListener('DOMContentLoaded', () => {
   ].forEach((id) => { el[id] = document.getElementById(id); });
 
   bindStudio();
+  const sharedParams = new URLSearchParams(window.location.search);
+  studioState.sharedDocumentId = String(sharedParams.get('documentId') || '').trim();
+  studioState.sharedDocumentPage = String(sharedParams.get('page') || '').trim();
+  updateSharedDocumentContext();
+  syncClassicNavigationContext();
   updateStatusBar();
   refreshIcons();
   loadHealth();
+  hydrateSharedDocument();
   window.addEventListener('resize', resizeRecreateEditor);
 });
 
 function bindStudio() {
-  el.backToClassicBtn.addEventListener('click', () => {
-    window.location.href = '/';
-  });
-
   el.documentInput.addEventListener('change', () => {
     studioState.selectedFile = el.documentInput.files[0] || null;
+    studioState.sharedDocumentId = '';
+    studioState.sharedDocumentPage = '';
     el.documentFileLabel.textContent = studioState.selectedFile ? studioState.selectedFile.name : '문서 선택';
+    updateSharedDocumentContext();
+    syncClassicNavigationContext();
     setStatus('대기');
   });
 
@@ -121,6 +131,28 @@ function bindStudio() {
     button.addEventListener('click', () => setView(button.dataset.view));
   });
 
+  document.querySelectorAll('[data-studio-trigger]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.studioTrigger === 'open') {
+        el.documentInput.click();
+      } else if (button.dataset.studioTrigger === 'parse') {
+        setView('parseView');
+        parseDocument();
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-studio-view]').forEach((button) => {
+    button.addEventListener('click', () => setView(button.dataset.studioView));
+  });
+
+  document.querySelectorAll('[data-studio-result-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setView('parseView');
+      setResultTab(button.dataset.studioResultTab);
+    });
+  });
+
   document.querySelectorAll('[data-result-tab]').forEach((button) => {
     button.addEventListener('click', () => setResultTab(button.dataset.resultTab));
   });
@@ -164,9 +196,57 @@ function updateStatusBar() {
   el.footerRunStatus.classList.toggle('is-ok', studioState.runStatusMode === 'ok');
 }
 
+function updateSharedDocumentContext() {
+  if (!el.studioCommandTitle || !el.studioCommandNote) return;
+  if (studioState.sharedDocumentId) {
+    el.studioCommandTitle.textContent = 'Classic PDF 문서 연결됨';
+    el.studioCommandNote.textContent = studioState.selectedFile?.name || '같은 작업 세션에서 이어서 작업합니다.';
+    return;
+  }
+  el.studioCommandTitle.textContent = '문서 작업 스튜디오';
+  el.studioCommandNote.textContent = '파싱·재생성·비교·양식';
+}
+
+function syncClassicNavigationContext() {
+  if (!el.backToClassicBtn) return;
+  const url = new URL('/', window.location.href);
+  if (studioState.sharedDocumentId) {
+    url.searchParams.set('documentId', studioState.sharedDocumentId);
+    const page = Number(studioState.sharedDocumentPage);
+    if (Number.isInteger(page) && page > 0) url.searchParams.set('page', String(page));
+  }
+  el.backToClassicBtn.href = `${url.pathname}${url.search}`;
+}
+
+async function hydrateSharedDocument() {
+  if (!studioState.sharedDocumentId) return;
+
+  try {
+    setStatus('Classic PDF 문서 연결 중');
+    const documentInfo = await requestJson('/api/documents/' + encodeURIComponent(studioState.sharedDocumentId) + '/open', {
+      method: 'POST',
+    });
+    const response = await fetch(documentInfo.url);
+    if (!response.ok) throw new Error('연결된 PDF를 불러오지 못했습니다.');
+    const blob = await response.blob();
+    const filename = documentInfo.originalName || 'document.pdf';
+    studioState.selectedFile = new File([blob], filename, { type: 'application/pdf' });
+    el.documentFileLabel.textContent = filename;
+    updateSharedDocumentContext();
+    syncClassicNavigationContext();
+    updateStatusBar();
+    setStatus('Classic PDF 문서 연결됨');
+  } catch (error) {
+    setStatus(error.message || '공유 문서를 연결하지 못했습니다.', 'error');
+  }
+}
+
 function setView(id) {
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.view === id);
+  });
+  document.querySelectorAll('[data-studio-view]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.studioView === id);
   });
   document.querySelectorAll('.studio-view').forEach((view) => {
     view.classList.toggle('is-active', view.id === id);
